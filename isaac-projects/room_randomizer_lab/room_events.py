@@ -120,13 +120,55 @@ def randomize_room_layout(
     desk_yaws = torch.zeros(M, device=device)
 
     # --- Phase 1: Wall props ------------------------------------------
-    _place_wall_props(env, env_ids, wall_prop_names, all_placed, all_placed_names)
+    wall_debug_obbs = _place_wall_props(env, env_ids, wall_prop_names, all_placed, all_placed_names)
 
     # --- Phase 2: Table group (desk + chair + robot) ------------------
-    _place_table_group(env, env_ids, all_placed, all_placed_names, desk_positions, desk_yaws)
+    table_debug_obbs = _place_table_group(
+        env, env_ids, all_placed, all_placed_names, desk_positions, desk_yaws
+    )
 
     # --- Phase 3: Tabletop objects ------------------------------------
-    _place_desk_objects(env, env_ids, table_prop_names, desk_positions, desk_yaws, min_table_objects)
+    tabletop_debug_obbs = _place_desk_objects(
+        env, env_ids, table_prop_names, desk_positions, desk_yaws, min_table_objects
+    )
+
+    # Keep the accepted OBBs available for an optional viewport overlay. Store
+    # them by global environment id because reset events may target a subset of
+    # environments.
+    debug_obbs = getattr(env, "_room_randomizer_debug_obbs", {})
+    for env_idx in range(M):
+        env_id = _env_id_int(env_ids, env_idx)
+        records = []
+        records.extend(
+            {
+                "name": name,
+                "category": "wall",
+                "box": box,
+                "z": FLOOR_Z + 0.04,
+            }
+            for name, box in wall_debug_obbs[env_idx]
+            if box is not None
+        )
+        records.extend(
+            {
+                "name": name,
+                "category": "robot" if name == "ridgeback" else "table_group",
+                "box": box,
+                "z": FLOOR_Z + 0.04,
+            }
+            for name, box in table_debug_obbs[env_idx]
+        )
+        records.extend(
+            {
+                "name": name,
+                "category": "tabletop",
+                "box": box,
+                "z": DESK_OBJECT_Z + 0.04,
+            }
+            for name, box in tabletop_debug_obbs[env_idx]
+        )
+        debug_obbs[env_id] = records
+    env._room_randomizer_debug_obbs = debug_obbs
 
 
 # ======================================================================
@@ -280,7 +322,7 @@ def _place_wall_props(
     wall_prop_names: list[str],
     all_placed: List[List[OBB]],
     all_placed_names: List[List[str]],
-):
+) -> List[List[tuple[str, Optional[OBB]]]]:
     """Place wall props using continuous zone sampling + OBB collision."""
     M = len(env_ids)
     device = env.device
@@ -370,6 +412,8 @@ def _place_wall_props(
                         flush=True,
                     )
 
+    return debug_records
+
 
 # ======================================================================
 # Phase 2: Table group — continuous interior sampling
@@ -382,7 +426,7 @@ def _place_table_group(
     all_placed_names: List[List[str]],
     desk_positions: torch.Tensor,
     desk_yaws: torch.Tensor,
-):
+) -> list[list[tuple[str, OBB]]]:
     """Place desk + chair + robot with continuous sampling and OBB collision."""
     M = len(env_ids)
     device = env.device
@@ -503,6 +547,8 @@ def _place_table_group(
         robot_state = build_root_state(robot_pos, robot_yaw, env_origins, env_ids, robot_asset.data.default_root_state)
         robot_asset.write_root_state_to_sim(robot_state, env_ids=env_ids)
 
+    return final_table_obbs
+
 
 # ======================================================================
 # Phase 3: Tabletop objects — OBB collision on desk surface
@@ -515,16 +561,17 @@ def _place_desk_objects(
     desk_pos: torch.Tensor,
     desk_yaw_rad: torch.Tensor,
     min_table_objects: int = 2,
-):
+) -> list[list[tuple[str, OBB]]]:
     """Place tabletop objects on the desk surface with rejection sampling.
 
     Randomly despawns 0–1 objects to achieve variable count (min_table_objects
     to len(table_prop_names)).
     """
-    if not table_prop_names:
-        return
-
     M = len(env_ids)
+    debug_obbs: list[list[tuple[str, OBB]]] = [[] for _ in range(M)]
+    if not table_prop_names:
+        return debug_obbs
+
     device = env.device
     env_origins = env.scene.env_origins
     rng = random.Random()
@@ -583,6 +630,9 @@ def _place_desk_objects(
 
                         root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
                         asset.write_root_state_to_sim(root_state, env_ids=eid)
+                        debug_obbs[env_idx].append(
+                            (name, make_obb(wx, wy, meta.bbox, world_yaw))
+                        )
                         placed = True
                         break
 
@@ -605,3 +655,5 @@ def _place_desk_objects(
                 eid = env_ids[env_idx:env_idx+1]
                 root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
                 asset.write_root_state_to_sim(root_state, env_ids=eid)
+
+    return debug_obbs

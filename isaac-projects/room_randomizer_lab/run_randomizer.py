@@ -19,8 +19,17 @@ parser = argparse.ArgumentParser(description="Run the Hospital Room Randomizer."
 parser.add_argument("--num_envs", type=int, default=4, help="Number of environments to spawn.")
 parser.add_argument("--max_steps", type=int, default=0, help="Stop after this many simulation steps. Use 0 to run until closed.")
 parser.add_argument("--save_camera", action="store_true", help="Save top-down camera renders to camera_output/ on each reset.")
+parser.add_argument("--reset_interval", type=int, default=150, help="Simulation steps between layout randomizations.")
+parser.add_argument("--visualize_obbs", action="store_true", help="Draw accepted 2D OBB footprints in the viewport.")
+parser.add_argument(
+    "--visualize_obb_margins",
+    action="store_true",
+    help="Also draw the collision-clearance margin around each floor-level OBB.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+if args_cli.reset_interval <= 0:
+    parser.error("--reset_interval must be greater than zero")
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -95,11 +104,21 @@ def main():
     env = ManagerBasedEnv(cfg=env_cfg)
     print("[INFO] ManagerBasedEnv initialized.", flush=True)
 
+    obb_visualizer = None
+    if args_cli.visualize_obbs:
+        from isaacsim.core.utils.extensions import enable_extension
+
+        enable_extension("isaacsim.util.debug_draw")
+        simulation_app.update()
+        from room_randomizer_lab.obb_visualizer import ObbVisualizer
+
+        obb_visualizer = ObbVisualizer(env, show_margins=args_cli.visualize_obb_margins)
+
     # 5. Simulation Loop
     print("[INFO] Starting simulation loop. Press Ctrl+C to stop.", flush=True)
     step_count = 0
     reset_count = 0
-    reset_interval = 150  # Reset and randomize every 150 steps
+    reset_interval = args_cli.reset_interval
 
     # Camera output setup
     camera_output_dir = None
@@ -115,6 +134,8 @@ def main():
                 print(f"[INFO] Triggering environment reset (step {step_count})...", flush=True)
                 env.reset()
                 reset_count += 1
+                if obb_visualizer is not None:
+                    obb_visualizer.draw()
             
             # Step the simulation forward (with empty actions)
             env.step(action=torch.empty(env.num_envs, 0, device=env.device))
@@ -128,6 +149,8 @@ def main():
                 print(f"[INFO] Reached --max_steps={args_cli.max_steps}; exiting.", flush=True)
                 break
 
+    if obb_visualizer is not None:
+        obb_visualizer.clear()
     env.close()
 
 if __name__ == "__main__":
