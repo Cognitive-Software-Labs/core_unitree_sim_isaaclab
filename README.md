@@ -1,6 +1,6 @@
 <div align="center">
   <h1 align="center"> unitree_sim_isaaclab </h1>
-  <h3 align="center"> Unitree Robotics </h3>
+  <h3 align="center"> Unitree Robotics Test </h3>
   <p align="center">
     <a> English </a> | <a href="README_zh-CN.md">中文</a> 
   </p>
