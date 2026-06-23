@@ -139,6 +139,9 @@ class WallPropMeta:
     """Placement metadata for a wall prop."""
     usd_name: str
     bbox: BBox              # footprint in the object's local frame
+    # Local XY offset used to align the viewport footprint with the mesh.
+    # Placement collision behavior intentionally remains root-centered.
+    bbox_center: Tuple[float, float] = (0.0, 0.0)
     tall: bool = False
     wall_offset: float = 0.0  # extra push away from wall surface (metres)
     yaw_offset: float = 0.0   # yaw adjustment relative to wall base yaw (radians)
@@ -149,6 +152,7 @@ WALL_PROP_META: Dict[str, WallPropMeta] = {
     "medical_cabinet": WallPropMeta(
         "SM_MedicalCabinet_01a",
         bbox=BBox(half_w=0.436, half_d=0.328),
+        bbox_center=(0.415679, 0.303706),
         tall=True,
         wall_offset=0.25,
         yaw_offset=math.pi,

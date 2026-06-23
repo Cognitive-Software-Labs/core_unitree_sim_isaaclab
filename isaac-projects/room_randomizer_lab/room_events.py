@@ -328,7 +328,8 @@ def _place_wall_props(
     device = env.device
     rng = random.Random()
 
-    # Shuffle order: tall props first for best placement priority.
+    # Preserve the configured order within each group while giving all tall
+    # furniture priority over the smaller wall props.
     sorted_names = sorted(
         wall_prop_names,
         key=lambda n: not WALL_PROP_META[n].tall,
@@ -355,6 +356,7 @@ def _place_wall_props(
                 zone = rng.choice(allowed_zones)
                 cx, cy, yaw = _sample_wall_position(zone, meta, rng)
 
+                # Preserve the original root-centered collision algorithm.
                 candidate = make_obb(cx, cy, meta.bbox, yaw)
 
                 # Check room bounds.
@@ -370,7 +372,14 @@ def _place_wall_props(
                 yaw_rad[env_idx] = yaw
                 all_placed[env_idx].append(candidate)
                 all_placed_names[env_idx].append(name)
-                debug_records[env_idx].append((name, candidate))
+                # The viewport outline may need an asset-local center offset
+                # even though collision placement remains root-centered.
+                debug_cx, debug_cy = offset_from_yaw(
+                    cx, cy, yaw, meta.bbox_center[0], meta.bbox_center[1]
+                )
+                debug_records[env_idx].append(
+                    (name, make_obb(debug_cx, debug_cy, meta.bbox, yaw))
+                )
                 success = True
                 break
 

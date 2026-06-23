@@ -136,9 +136,12 @@ def randomize_one_room():
                 continue
 
             placed_obbs.append(candidate)
+            debug_cx, debug_cy = offset_from_yaw(
+                cx, cy, yaw, meta.bbox_center[0], meta.bbox_center[1]
+            )
             results["wall_props"].append({
                 "name": name,
-                "cx": cx, "cy": cy,
+                "cx": debug_cx, "cy": debug_cy,
                 "hw": meta.bbox.half_w, "hd": meta.bbox.half_d,
                 "yaw": yaw,
                 "tall": meta.tall,
