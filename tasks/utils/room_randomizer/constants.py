@@ -106,8 +106,11 @@ DESK_LOCAL_Y_MIN = -0.2
 DESK_LOCAL_Y_MAX = 0.2
 DESK_OBJECT_MARGIN = 0.05   # margin between tabletop OBBs
 
-# Relative offset of robot to desk center (G1 sits at (0.0, -0.55) local frame)
-ROBOT_ORBIT_OFFSET = (0.0, -0.55)
+# Regular pick/place local transforms relative to the packing table center.
+# These match TableCylinderSceneCfg: robot=(-0.15, 0.0), table=(0.0, 0.55),
+# object=(-0.35, 0.40) when the table yaw is zero.
+ROBOT_ORBIT_OFFSET = (-0.15, -0.55)
+OBJECT_TABLE_LOCAL_OFFSET = (-0.35, -0.15)
 
 # Despawn height
 DESPAWN_Z = -100.0
@@ -183,8 +186,9 @@ WALL_PROP_META: Dict[str, WallPropMeta] = {
 # Table group bounding boxes
 # ============================================================
 
-DESK_BBOX = BBox(half_w=0.6, half_d=0.4)
-ROBOT_BBOX = BBox(half_w=0.35, half_d=0.35)
+DESK_BBOX = BBox(half_w=1.10, half_d=0.65)
+ROBOT_BBOX = BBox(half_w=0.25, half_d=0.25)
+ROBOT_TABLE_MARGIN = 0.0
 
 # ============================================================
 # Tabletop object metadata

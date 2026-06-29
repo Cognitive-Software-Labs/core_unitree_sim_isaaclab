@@ -76,6 +76,7 @@ parser.add_argument("--camera_exclude", type=str, default="world_camera", help="
 
 parser.add_argument("--env_reward_interval", type=int, default=5, help="environment reward compute interval (steps)")
 parser.add_argument("--seed", type=int, default=42, help="environment seed")
+parser.add_argument("--disable_auto_reset", action="store_true", default=False, help="disable task termination auto-resets")
 # add AppLauncher parameters
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -174,6 +175,9 @@ def main():
     try:
         env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=1)
         env_cfg.env_name = args_cli.task
+        if args_cli.disable_auto_reset:
+            env_cfg.terminations = None
+            print("[env] task termination auto-resets disabled")
     except Exception as e:
         print(f"Failed to parse environment configuration: {e}")
         return

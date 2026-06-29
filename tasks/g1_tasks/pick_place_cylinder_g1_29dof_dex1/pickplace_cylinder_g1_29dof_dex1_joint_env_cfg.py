@@ -23,14 +23,55 @@ from tasks.common_config import  G1RobotPresets, CameraPresets  # isort: skip
 from tasks.common_event.event_manager import SimpleEvent, SimpleEventManager
 
 # import public scene configuration
-from tasks.common_scene.base_scene_pickplace_cylindercfg import TableCylinderSceneCfg
+from tasks.common_scene.base_scene_randomized_pickplace_cfg import RandomizedRoomPickPlaceSceneCfg
+from tasks.utils.room_randomizer import randomize_pickplace_room_layout
+from tasks.utils.room_randomizer.constants import ROOM_X_MAX, ROOM_X_MIN, ROOM_Y_MAX, ROOM_Y_MIN
 
 ##
 # Scene definition
 ##
 
+WALL_PROP_NAMES = [
+    "medical_cabinet",
+    "shelf_set",
+    "supply_cabinet",
+    "supply_cart_a",
+    "supply_cart_b",
+    "trash_can",
+    "plant_a",
+    "plant_b",
+]
+
+# Keep coffee_cup and box_portable hidden for the first visual checks.
+TABLE_PROP_NAMES = [
+    "desk_lamp",
+]
+
+
+def _randomize_room_for_all_envs(env):
+    randomize_pickplace_room_layout(
+        env,
+        torch.arange(env.num_envs, device=env.device),
+        wall_prop_names=WALL_PROP_NAMES,
+        table_prop_names=TABLE_PROP_NAMES,
+        min_table_objects=1,
+    )
+
+
+def _reset_all_then_randomize_room(env):
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    base_mdp.reset_scene_to_default(env, env_ids)
+    randomize_pickplace_room_layout(
+        env,
+        env_ids,
+        wall_prop_names=WALL_PROP_NAMES,
+        table_prop_names=TABLE_PROP_NAMES,
+        min_table_objects=1,
+    )
+
+
 @configclass
-class ObjectTableSceneCfg(TableCylinderSceneCfg):
+class ObjectTableSceneCfg(RandomizedRoomPickPlaceSceneCfg):
     """object table scene configuration class
     inherits from G1SingleObjectSceneCfg, gets the complete G1 robot scene configuration
     can add task-specific scene elements or override default configurations here
@@ -89,7 +130,17 @@ class ObservationsCfg:
 @configclass
 class TerminationsCfg:
     # check if the object is out of the working range
-    success = DoneTerm(func=mdp.reset_object_estimate)# use task completion check function
+    success = DoneTerm(
+        func=mdp.reset_object_estimate,
+        params={
+            "min_x": ROOM_X_MIN,
+            "max_x": ROOM_X_MAX,
+            "min_y": ROOM_Y_MIN,
+            "max_y": ROOM_Y_MAX,
+            "min_height": 0.25,
+        },
+    )
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
 @configclass
 class RewardsCfg:
@@ -97,19 +148,13 @@ class RewardsCfg:
 
 @configclass
 class EventCfg:
-    reset_object = EventTermCfg(
-        func=mdp.reset_root_state_uniform,  # use uniform distribution reset function
-        mode="reset",   # set event mode to reset
+    randomize_room_layout = EventTermCfg(
+        func=randomize_pickplace_room_layout,
+        mode="reset",
         params={
-            # position range parameter
-            "pose_range": {
-                "x": [-0.05, 0.05],  # x axis position range: -0.05 to 0.0 meter
-                "y": [-0.05, 0.05],   # y axis position range: 0.0 to 0.05 meter
-            },
-            # speed range parameter (empty dictionary means using default value)
-            "velocity_range": {},
-            # specify the object to reset
-            "asset_cfg": SceneEntityCfg("object"),
+            "wall_prop_names": WALL_PROP_NAMES,
+            "table_prop_names": TABLE_PROP_NAMES,
+            "min_table_objects": 1,
         },
     )
 
@@ -122,7 +167,7 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
 
     # 1. scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=1, # environment number: 1
-                                                     env_spacing=2.5, # environment spacing: 2.5 meter
+                                                     env_spacing=16.0, # hospital room footprint needs wider spacing
                                                      replicate_physics=True # enable physics replication
                                                      )
     # basic settings
@@ -140,6 +185,9 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
         # general settings
         self.decimation = 2
         self.episode_length_s = 20.0
+        self.viewer.origin_type = "world"
+        self.viewer.eye = (-7.5, -3.2, 4.2)
+        self.viewer.lookat = (-7.5, -7.6, 0.8)
         # simulation settings
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
@@ -150,19 +198,10 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
         # create event manager
         self.event_manager = SimpleEventManager()
 
-        # register "reset object" event
         self.event_manager.register("reset_object_self", SimpleEvent(
-            func=lambda env: base_mdp.reset_root_state_uniform(
-                env,
-                torch.arange(env.num_envs, device=env.device),
-                pose_range={"x": [-0.05, 0.05], "y": [0.0, 0.05]},
-                velocity_range={},
-                asset_cfg=SceneEntityCfg("object"),
-            )
+            func=_randomize_room_for_all_envs
         ))
         
         self.event_manager.register("reset_all_self", SimpleEvent(
-            func=lambda env: base_mdp.reset_scene_to_default(
-                env,
-                torch.arange(env.num_envs, device=env.device))
+            func=_reset_all_then_randomize_room
         ))

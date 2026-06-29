@@ -127,10 +127,7 @@ class RandomizedRoomPickPlaceSceneCfg(InteractiveSceneCfg):
     # Main Packing Table (kinematic desk)
     packing_table = RigidObjectCfg(
         prim_path="/World/envs/env_.*/PackingTable",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{project_root}/assets/objects/PackingTable/PackingTable.usd",
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        ),
+        spawn=_kinematic_usd_cfg(f"{project_root}/assets/objects/PackingTable/PackingTable.usd"),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.55, -0.2)),
     )
 
