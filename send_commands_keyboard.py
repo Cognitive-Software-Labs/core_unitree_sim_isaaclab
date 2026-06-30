@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-使用 pynput 库实现键盘控制
+使用 pynput 库实现键盘控制，并集成夹爪控制和场景重置
 """
 
 import time
 from unitree_sdk2py.core.channel import ChannelPublisher, ChannelFactoryInitialize
 from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
+from unitree_sdk2py.idl.unitree_go.msg.dds_ import MotorCmds_
+from unitree_sdk2py.idl.default import unitree_go_msg_dds__MotorCmd_
 
 import threading
 import math
 import numpy as np
-import time
 from pynput import keyboard
 
 
@@ -30,12 +31,15 @@ class LowPassFilter:
 
 
 class KeyboardController:
-    def __init__(self):
+    def __init__(self, reset_publisher=None):
+        self.reset_publisher = reset_publisher
         self.control_params = {
             'x_vel': 0.0,
             'y_vel': 0.0,
             'yaw_vel': 0.0,
-            'height': 0.0
+            'height': 0.0,
+            'left_gripper': 5.4,
+            'right_gripper': 5.4
         }
         
         # Key increment step size   
@@ -46,7 +50,9 @@ class KeyboardController:
             'x_vel': (-0.6, 1.0),    # forward velocity
             'y_vel': (-0.5, 0.5),   # lateral velocity
             'yaw_vel': (-1.57, 1.57), # yaw velocity
-            'height': (-0.5, 0.0)    # height
+            'height': (-0.5, 0.0),   # height
+            'left_gripper': (0.0, 5.4),
+            'right_gripper': (0.0, 5.4)
         }
         
         # key state
@@ -58,6 +64,10 @@ class KeyboardController:
             'z': False,  # left rotation
             'x': False,  # right rotation
             'c': False,  # crouch
+            'u': False,  # left gripper open
+            'i': False,  # left gripper close
+            'o': False,  # right gripper open
+            'p': False,  # right gripper close
         }
         
         self.param_lock = threading.Lock()
@@ -97,6 +107,14 @@ class KeyboardController:
                         if not self.key_states[key_char]:
                             self.key_states[key_char] = True
                             print(f"[KEY] {key_char.upper()}: press")
+                    elif key_char == 'r':
+                        print("[KEY] R: publish reset category 1 (Room Randomization)")
+                        if self.reset_publisher:
+                            publish_reset_category("1", self.reset_publisher)
+                    elif key_char == 't':
+                        print("[KEY] T: publish reset category 2 (Full Scene Reset & Randomize)")
+                        if self.reset_publisher:
+                            publish_reset_category("2", self.reset_publisher)
                     elif key_char == 'q':
                         print("exit program...")
                         self.running = False
@@ -129,7 +147,10 @@ class KeyboardController:
         self.listener.start()
         
         print("keyboard listener started...")
-        print("press W/A/S/D/Z/X/C keys to control")
+        print("W/A/S/D/Z/X/C to move the robot base/crouch")
+        print("U/I to Open/Close Left Gripper")
+        print("O/P to Open/Close Right Gripper")
+        print("R to randomize room layout, T for full scene reset")
         print("press Q key to exit program")
 
     def _control_update(self):
@@ -203,6 +224,18 @@ class KeyboardController:
                     if self.control_params['height'] < 0:
                         self.control_params['height'] = min(0, self.control_params['height'] + self.increment * 2)
 
+                # left gripper control
+                if self.key_states['u']:  # open
+                    self.control_params['left_gripper'] = 5.4
+                elif self.key_states['i']:  # close
+                    self.control_params['left_gripper'] = 0.0
+
+                # right gripper control
+                if self.key_states['o']:  # open
+                    self.control_params['right_gripper'] = 5.4
+                elif self.key_states['p']:  # close
+                    self.control_params['right_gripper'] = 0.0
+
                 # round to avoid floating point precision issues
                 for key in self.control_params:
                     self.control_params[key] = round(self.control_params[key], 3)
@@ -229,24 +262,33 @@ class KeyboardController:
 def publish_reset_category(category, publisher):
     # construct message
     msg = String_(data=str(category))  # pass data parameter directly during initialization
-
-    # create publisher
-
-    # publish message
     publisher.Write(msg)
-    # print(f"published reset category: {category}")
+
+
+def publish_gripper_cmd(publisher, q_val):
+    msg = MotorCmds_()
+    cmd = unitree_go_msg_dds__MotorCmd_()
+    cmd.q = float(q_val)
+    cmd.dq = 0.0
+    cmd.tau = 0.0
+    cmd.kp = 0.0
+    cmd.kd = 0.0
+    msg.cmds.append(cmd)
+    publisher.Write(msg)
+
 
 if __name__ == "__main__":
     print("=" * 50)
     print("keyboard control instructions (pynput version):")
     print("W: forward    S: backward")
-    print("A: left  D: right") 
-    print("Z: left rotation  X: right rotation")
-    print("C: crouch    Q: exit program")
-    print("press and hold the key to increase, release the key to gradually return to the default value")
-    print("")
-    print("note: if the pynput library is missing, please install:")
-    print("pip install pynput")
+    print("A: left       D: right") 
+    print("Z: left rot   X: right rot")
+    print("C: crouch     Q: exit program")
+    print("U/I: Open/Close Left Gripper")
+    print("O/P: Open/Close Right Gripper")
+    print("R: Trigger room randomization (Category 1)")
+    print("T: Trigger full scene reset (Category 2)")
+    print("press and hold move keys to increase, release to return to default")
     print("=" * 50)
     
     try:
@@ -261,12 +303,24 @@ if __name__ == "__main__":
         # initialize DDS
         print("initializing DDS communication...")
         ChannelFactoryInitialize(1)
-        publisher = ChannelPublisher("rt/run_command/cmd", String_)
-        publisher.Init()
+        
+        # Publishers
+        cmd_publisher = ChannelPublisher("rt/run_command/cmd", String_)
+        cmd_publisher.Init()
+        
+        reset_publisher = ChannelPublisher("rt/reset_pose/cmd", String_)
+        reset_publisher.Init()
+        
+        left_gripper_publisher = ChannelPublisher("rt/dex1/left/cmd", MotorCmds_)
+        left_gripper_publisher.Init()
+        
+        right_gripper_publisher = ChannelPublisher("rt/dex1/right/cmd", MotorCmds_)
+        right_gripper_publisher.Init()
+        
         print("DDS communication initialized")
         
         print("initializing keyboard controller...")
-        keyboard_controller = KeyboardController()
+        keyboard_controller = KeyboardController(reset_publisher=reset_publisher)
         default_height = 0.8
         
         print("=" * 50)
@@ -274,9 +328,11 @@ if __name__ == "__main__":
         print("press Ctrl+C to exit program")
         print("=" * 50)
         
-        # add a counter, only show when the command changes
+        # add counters, only show when command changes
         counter = 0
         last_commands = [0.0, 0.0, 0.0, 0.8]
+        last_left_gripper = 5.4
+        last_right_gripper = 5.4
         
         while keyboard_controller.running:
             time.sleep(0.01)
@@ -293,7 +349,21 @@ if __name__ == "__main__":
                 print(f"commands: {commands_str}")
                 last_commands = commands_list.copy()
                 
-            publish_reset_category(commands_str, publisher)
+            publish_reset_category(commands_str, cmd_publisher)
+            
+            # Grippers
+            left_q = float(commands['left_gripper'])
+            right_q = float(commands['right_gripper'])
+            
+            if left_q != last_left_gripper:
+                print(f"left gripper command: {left_q}")
+                last_left_gripper = left_q
+            if right_q != last_right_gripper:
+                print(f"right gripper command: {right_q}")
+                last_right_gripper = right_q
+                
+            publish_gripper_cmd(left_gripper_publisher, left_q)
+            publish_gripper_cmd(right_gripper_publisher, right_q)
             
     except KeyboardInterrupt:
         print("\nprogram interrupted by user (Ctrl+C)")
@@ -304,4 +374,5 @@ if __name__ == "__main__":
         if 'keyboard_controller' in locals():
             keyboard_controller.stop()
     
-    print("program ended") 
+    print("program ended")
+ 
