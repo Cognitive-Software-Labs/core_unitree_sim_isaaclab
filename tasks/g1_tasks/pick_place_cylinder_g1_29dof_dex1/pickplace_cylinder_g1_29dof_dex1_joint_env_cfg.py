@@ -20,55 +20,19 @@ from . import mdp
 # use Isaac Lab native event system
 
 from tasks.common_config import  G1RobotPresets, CameraPresets  # isort: skip
-from tasks.common_event.event_manager import SimpleEvent, SimpleEventManager
-
 # import public scene configuration
 from tasks.common_scene.base_scene_randomized_pickplace_cfg import RandomizedRoomPickPlaceSceneCfg
 from tasks.utils.room_randomizer import randomize_pickplace_room_layout
 from tasks.utils.room_randomizer.constants import ROOM_X_MAX, ROOM_X_MIN, ROOM_Y_MAX, ROOM_Y_MIN
+from tasks.utils.room_randomizer.pickplace_config import (
+    TABLE_PROP_NAMES,
+    WALL_PROP_NAMES,
+    register_randomized_room_reset_events,
+)
 
 ##
 # Scene definition
 ##
-
-WALL_PROP_NAMES = [
-    "medical_cabinet",
-    "shelf_set",
-    "supply_cabinet",
-    "supply_cart_a",
-    "supply_cart_b",
-    "trash_can",
-    "plant_a",
-    "plant_b",
-]
-
-# Keep coffee_cup and box_portable hidden for the first visual checks.
-TABLE_PROP_NAMES = [
-    "desk_lamp",
-]
-
-
-def _randomize_room_for_all_envs(env):
-    randomize_pickplace_room_layout(
-        env,
-        torch.arange(env.num_envs, device=env.device),
-        wall_prop_names=WALL_PROP_NAMES,
-        table_prop_names=TABLE_PROP_NAMES,
-        min_table_objects=1,
-    )
-
-
-def _reset_all_then_randomize_room(env):
-    env_ids = torch.arange(env.num_envs, device=env.device)
-    base_mdp.reset_scene_to_default(env, env_ids)
-    randomize_pickplace_room_layout(
-        env,
-        env_ids,
-        wall_prop_names=WALL_PROP_NAMES,
-        table_prop_names=TABLE_PROP_NAMES,
-        min_table_objects=1,
-    )
-
 
 @configclass
 class ObjectTableSceneCfg(RandomizedRoomPickPlaceSceneCfg):
@@ -196,12 +160,4 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
         # create event manager
-        self.event_manager = SimpleEventManager()
-
-        self.event_manager.register("reset_object_self", SimpleEvent(
-            func=_randomize_room_for_all_envs
-        ))
-        
-        self.event_manager.register("reset_all_self", SimpleEvent(
-            func=_reset_all_then_randomize_room
-        ))
+        register_randomized_room_reset_events(self)
