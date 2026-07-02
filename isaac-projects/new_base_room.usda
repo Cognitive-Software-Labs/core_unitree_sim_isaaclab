@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (-7.176724305006276, -6.293501752039159, 14.578599451618006)
-                double3 target = (-4.568605254398872, -6.579454964870198, -2.923913439123668)
+                double3 position = (-5.490006570055001, -6.041407272619409, 4.485263334652934)
+                double3 target = (-5.181943232281569, -5.965474394156695, 3.783477468144935)
             }
             dictionary Right = {
                 double3 position = (0, -500, 0)
@@ -181,6 +181,60 @@ def Xform "World"
                             over "Section1"
                             {
                             }
+                        }
+                    }
+                }
+
+                def "Geo_M1_SideWall_12" (
+                    apiSchemas = None
+                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M1_SideWall_11.usd@
+                )
+                {
+                    quatf xformOp:orient = (6.123234e-17, 0, 0, 1)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (-2.1920250557928522, -5.4705004733585545, -1.0768279423700733e-7)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    over "Geo_M1_SideWall" (
+                        prepend apiSchemas = ["MaterialBindingAPI"]
+                    )
+                    {
+                        rel material:binding = </World/Environment/props/room_props/ridgeback_03/Looks/material_white> (
+                            bindMaterialAs = "weakerThanDescendants"
+                        )
+
+                        over "Geo_M1_SideWall"
+                        {
+                            over "Section0"
+                            {
+                            }
+
+                            over "Section1"
+                            {
+                            }
+                        }
+                    }
+                }
+
+                def "Geo_M1_SideWallPanel_96" (
+                    apiSchemas = None
+                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M1_SideWallPanel_95.usd@
+                )
+                {
+                    quatf xformOp:orient = (6.123234e-17, 0, 0, 1)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (2.0628003846113465, -1.7022783274683064, -5.746766191805364e-7)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    over "Geo_M1_SideWallPanel"
+                    {
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (4.371996963268662, 3.9249891303809594, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        over "Geo_M1_SideWallPanel"
+                        {
                         }
                     }
                 }

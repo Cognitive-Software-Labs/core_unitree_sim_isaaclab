@@ -86,8 +86,17 @@ if args_cli.no_render:
 else:
     os.environ["LIVESTREAM"] = "0"
 
-if args_cli.enable_dex3_dds and args_cli.enable_dex1_dds and args_cli.enable_inspire_dds:
-    print("Error: enable_dex3_dds and enable_dex1_dds and enable_inspire_dds cannot be enabled at the same time")
+enabled_dds_flags = [
+    flag_name
+    for flag_name, enabled in (
+        ("enable_dex1_dds", args_cli.enable_dex1_dds),
+        ("enable_dex3_dds", args_cli.enable_dex3_dds),
+        ("enable_inspire_dds", args_cli.enable_inspire_dds),
+    )
+    if enabled
+]
+if len(enabled_dds_flags) > 1:
+    print(f"Error: DDS modes cannot be enabled at the same time: {', '.join(enabled_dds_flags)}")
     print("Please select one of the options")
     sys.exit(1)
 

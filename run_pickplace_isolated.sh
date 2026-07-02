@@ -21,10 +21,28 @@ export TELEIMAGER_REQUEST_PORT="${TELEIMAGER_REQUEST_PORT:-60010}"
 export TELEIMAGER_PORT_OFFSET="${TELEIMAGER_PORT_OFFSET:-100}"
 export TELEIMAGER_DISABLE_WEBRTC="${TELEIMAGER_DISABLE_WEBRTC:-1}"
 export ISAAC_IMAGE_SHM_PREFIX="${ISAAC_IMAGE_SHM_PREFIX:-vilmos_isaac}"
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 
 DEVICE="${DEVICE:-cuda:0}"
 TASK="${TASK:-Isaac-PickPlace-Cylinder-G129-Dex1-Joint}"
 ROBOT_TYPE="${ROBOT_TYPE:-g129}"
+HAND_DDS="${HAND_DDS:-dex1}"
+
+case "$HAND_DDS" in
+  dex1)
+    DDS_FLAG="--enable_dex1_dds"
+    ;;
+  dex3)
+    DDS_FLAG="--enable_dex3_dds"
+    ;;
+  inspire)
+    DDS_FLAG="--enable_inspire_dds"
+    ;;
+  *)
+    echo "Unsupported HAND_DDS='$HAND_DDS'. Expected one of: dex1, dex3, inspire." >&2
+    exit 2
+    ;;
+esac
 
 cd "$REPO_ROOT"
 "$REPO_ROOT/stop_own_pickplace.sh"
@@ -36,6 +54,6 @@ exec "$ISAACLAB_SH" -p sim_main.py \
   --device "$DEVICE" \
   --enable_cameras \
   --task "$TASK" \
-  --enable_dex1_dds \
+  "$DDS_FLAG" \
   --robot_type "$ROBOT_TYPE" \
   "$@"
