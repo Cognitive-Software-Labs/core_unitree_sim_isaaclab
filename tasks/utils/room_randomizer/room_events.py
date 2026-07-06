@@ -24,10 +24,16 @@ from .constants import (
     OBJECT_TABLE_LOCAL_OFFSET,
     OBB_PLACEMENT_MARGIN,
     ROBOT_BBOX,
+    ROBOT_FACING_LAYOUTS,
+    ROBOT_FACING_MAX_YAW_OFFSET_RAD,
+    ROBOT_FACING_YAW_JITTER_RAD,
     ROBOT_ORBIT_OFFSET,
     ROBOT_TABLE_MARGIN,
-    TABLE_FALLBACK_X,
-    TABLE_FALLBACK_Y,
+    STATIC_ROOM_OBSTACLES,
+    TABLE_GROUP_X_MAX,
+    TABLE_GROUP_X_MIN,
+    TABLE_GROUP_Y_MAX,
+    TABLE_GROUP_Y_MIN,
     TABLE_GROUP_MAX_TRIES,
     TABLE_SAMPLE_X_MAX,
     TABLE_SAMPLE_X_MIN,
@@ -37,6 +43,7 @@ from .constants import (
     WALL_PROP_META,
     WALL_ZONES,
     WallZone,
+    RobotFacingLayout,
 )
 from .placement_utils import (
     OBB,
@@ -164,6 +171,9 @@ def randomize_pickplace_room_layout(
     # --- Phase 1: Wall props ---
     wall_debug_obbs = _place_wall_props(env, env_ids, wall_prop_names, all_placed, all_placed_names)
 
+    # --- Static RoomShell walls ---
+    static_wall_debug_obbs = _add_static_room_obstacles(env_ids, all_placed, all_placed_names)
+
     # --- Phase 2: Table group (desk/table + robot) ---
     table_debug_obbs = _place_table_group(
         env, env_ids, all_placed, all_placed_names, desk_positions, desk_yaws
@@ -187,6 +197,15 @@ def randomize_pickplace_room_layout(
             }
             for name, box in wall_debug_obbs[env_idx]
             if box is not None
+        )
+        records.extend(
+            {
+                "name": name,
+                "category": "static_wall",
+                "box": box,
+                "z": FLOOR_Z + 0.04,
+            }
+            for name, box in static_wall_debug_obbs[env_idx]
         )
         records.extend(
             {
@@ -254,6 +273,29 @@ def _print_obb_debug(name: str, env_id: int, box: OBB, prefix: str = "[PLACEMENT
             f"corners={_format_corners(box)}",
             flush=True,
         )
+
+
+def _add_static_room_obstacles(
+    env_ids: torch.Tensor,
+    all_placed: List[List[OBB]],
+    all_placed_names: List[List[str]],
+) -> List[List[tuple[str, OBB]]]:
+    """Add static RoomShell wall OBBs to the placement set."""
+    debug_records: List[List[tuple[str, OBB]]] = [[] for _ in range(len(env_ids))]
+    obstacle_obbs = [
+        (obstacle.name, make_obb(obstacle.center[0], obstacle.center[1], obstacle.bbox, obstacle.yaw))
+        for obstacle in STATIC_ROOM_OBSTACLES
+    ]
+
+    for env_idx in range(len(env_ids)):
+        env_id = _env_id_int(env_ids, env_idx)
+        for name, box in obstacle_obbs:
+            all_placed[env_idx].append(box)
+            all_placed_names[env_idx].append(name)
+            debug_records[env_idx].append((name, box))
+            _print_obb_debug(name, env_id, box)
+
+    return debug_records
 
 
 def _place_wall_props(
@@ -378,6 +420,41 @@ def _make_table_group_from_robot(
     return table_obbs, (dx, dy), table_yaw
 
 
+def _normalize_angle(angle: float) -> float:
+    """Wrap an angle to [-pi, pi]."""
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _sample_wall_facing_robot_pose(rng: random.Random) -> tuple[float, float, float, RobotFacingLayout]:
+    """Sample robot placement and aim it at a random point on a wall."""
+    layout = rng.choice(ROBOT_FACING_LAYOUTS)
+    rx = rng.uniform(TABLE_SAMPLE_X_MIN, TABLE_SAMPLE_X_MAX)
+    ry = rng.uniform(TABLE_SAMPLE_Y_MIN, TABLE_SAMPLE_Y_MAX)
+    target = rng.uniform(layout.sample_min, layout.sample_max)
+    if layout.target_axis == "y":
+        target_x, target_y = target, layout.fixed_coord
+    else:
+        target_x, target_y = layout.fixed_coord, target
+    raw_robot_yaw = math.atan2(target_y - ry, target_x - rx)
+    yaw_delta = _normalize_angle(raw_robot_yaw - layout.yaw_center)
+    yaw_delta = max(-ROBOT_FACING_MAX_YAW_OFFSET_RAD, min(ROBOT_FACING_MAX_YAW_OFFSET_RAD, yaw_delta))
+    robot_yaw = layout.yaw_center + yaw_delta
+    jitter = 0.0
+    if ROBOT_FACING_YAW_JITTER_RAD > 0.0:
+        jitter = rng.uniform(-ROBOT_FACING_YAW_JITTER_RAD, ROBOT_FACING_YAW_JITTER_RAD)
+    return rx, ry, robot_yaw + jitter, layout
+
+
+def _obb_inside_table_group_bounds(box: OBB) -> bool:
+    """Check the stricter robot/table usable area, including virtual open-side limits."""
+    for wx, wy in obb_corners(*box):
+        if wx < TABLE_GROUP_X_MIN or wx > TABLE_GROUP_X_MAX:
+            return False
+        if wy < TABLE_GROUP_Y_MIN or wy > TABLE_GROUP_Y_MAX:
+            return False
+    return True
+
+
 def _debug_table_group(env_id: int, table_obbs: list[tuple[str, OBB]], placed: List[OBB], placed_names: list[str]):
     """Print table group OBBs and overlap diagnostics."""
     for name, box in table_obbs:
@@ -440,6 +517,13 @@ def _validate_table_group(
     for name, box in table_obbs:
         if not obb_inside_room(box):
             issues.append(f"{name} outside_room corners={_format_corners(box)}")
+        if not _obb_inside_table_group_bounds(box):
+            issues.append(
+                f"{name} outside_table_group_bounds "
+                f"bounds=({TABLE_GROUP_X_MIN:+.3f},{TABLE_GROUP_X_MAX:+.3f},"
+                f"{TABLE_GROUP_Y_MIN:+.3f},{TABLE_GROUP_Y_MAX:+.3f}) "
+                f"corners={_format_corners(box)}"
+            )
 
     for name, box in table_obbs:
         for placed_name, placed_box in zip(placed_names, placed):
@@ -483,11 +567,10 @@ def _place_table_group(
     for env_idx in range(M):
         success = False
         selected_obbs: list[tuple[str, OBB]] = []
+        selected_layout_name = "none"
 
         for _ in range(TABLE_GROUP_MAX_TRIES):
-            rx = rng.uniform(TABLE_SAMPLE_X_MIN, TABLE_SAMPLE_X_MAX)
-            ry = rng.uniform(TABLE_SAMPLE_Y_MIN, TABLE_SAMPLE_Y_MAX)
-            robot_yaw = rng.uniform(0, 2 * math.pi)
+            rx, ry, robot_yaw, layout = _sample_wall_facing_robot_pose(rng)
 
             table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(rx, ry, robot_yaw)
             valid, _ = _validate_table_group(table_obbs, all_placed[env_idx], all_placed_names[env_idx])
@@ -498,23 +581,22 @@ def _place_table_group(
             desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
             desk_yaws[env_idx] = dyaw
             selected_obbs = table_obbs
+            selected_layout_name = layout.name
             success = True
             break
 
         if not success:
             # Fallback
-            dx, dy = TABLE_FALLBACK_X, TABLE_FALLBACK_Y
             fallback_issues: list[str] = []
             for _ in range(TABLE_GROUP_MAX_TRIES):
-                dyaw = rng.uniform(0, 2 * math.pi)
-                rx, ry = offset_from_yaw(dx, dy, dyaw, ROBOT_ORBIT_OFFSET[0], ROBOT_ORBIT_OFFSET[1])
-                robot_yaw = dyaw + math.pi / 2
+                rx, ry, robot_yaw, layout = _sample_wall_facing_robot_pose(rng)
                 table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(rx, ry, robot_yaw)
                 valid, fallback_issues = _validate_table_group(table_obbs, all_placed[env_idx], all_placed_names[env_idx])
                 if valid:
                     desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
                     desk_yaws[env_idx] = dyaw
                     selected_obbs = table_obbs
+                    selected_layout_name = layout.name
                     success = True
                     print(
                         f"[PLACEMENT_DEBUG] env={_env_id_int(env_ids, env_idx)} "
@@ -538,6 +620,11 @@ def _place_table_group(
             all_placed[env_idx].extend([box for _, box in selected_obbs])
             all_placed_names[env_idx].extend([name for name, _ in selected_obbs])
             group_placed_mask[env_idx] = True
+            print(
+                f"[PLACEMENT_DEBUG] env={_env_id_int(env_ids, env_idx)} "
+                f"table_group_layout={selected_layout_name}",
+                flush=True,
+            )
 
     for env_idx in range(M):
         env_id = _env_id_int(env_ids, env_idx)

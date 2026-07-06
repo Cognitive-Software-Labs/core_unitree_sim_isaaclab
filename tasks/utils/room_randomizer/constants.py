@@ -33,6 +33,7 @@ DESK_OBJECT_Z = 0.84   # object height on desk
 
 # Wall surface positions (room-facing edge of each wall).
 BACK_WALL_LINE_Y = -10.95
+FRONT_WALL_LINE_Y = -5.47
 RIGHT_WALL_LINE_X = -2.5
 
 # ============================================================
@@ -47,6 +48,15 @@ class BBox:
     """
     half_w: float
     half_d: float
+
+
+@dataclass(frozen=True)
+class StaticRoomObstacle:
+    """Static room-shell footprint that the table group must avoid."""
+    name: str
+    center: Tuple[float, float]
+    bbox: BBox
+    yaw: float = 0.0
 
 # ============================================================
 # Wall zones — continuous strips where wall props can be placed
@@ -83,6 +93,27 @@ WALL_ZONES: List[WallZone] = [
     ),
 ]
 
+# Static RoomShell wall footprints used by the OBB planner. These represent
+# authored USD wall geometry that PhysX collides with but the randomizer would
+# otherwise not know about.
+STATIC_ROOM_OBSTACLES: List[StaticRoomObstacle] = [
+    StaticRoomObstacle(
+        name="static_front_wall",
+        center=(-7.5, -5.47),
+        bbox=BBox(half_w=5.35, half_d=0.12),
+    ),
+    StaticRoomObstacle(
+        name="static_right_wall",
+        center=(-2.5, -8.15),
+        bbox=BBox(half_w=0.12, half_d=3.15),
+    ),
+    StaticRoomObstacle(
+        name="static_back_wall",
+        center=(-8.35, -10.95),
+        bbox=BBox(half_w=4.35, half_d=0.12),
+    ),
+]
+
 # ============================================================
 # Room interior sampling zone (for table group)
 # ============================================================
@@ -94,6 +125,101 @@ TABLE_SAMPLE_Y_MAX = -6.0
 TABLE_FALLBACK_X = -7.50
 TABLE_FALLBACK_Y = -7.50
 TABLE_GROUP_MAX_TRIES = 300
+
+# Stricter usable area for the table group. Unlike ROOM_* these bounds model
+# where the robot/table may operate, including virtual limits on open sides.
+TABLE_GROUP_X_MIN = -12.35
+TABLE_GROUP_X_MAX = RIGHT_WALL_LINE_X - 0.35
+TABLE_GROUP_Y_MIN = BACK_WALL_LINE_Y + 0.35
+TABLE_GROUP_Y_MAX = FRONT_WALL_LINE_Y - 0.35
+
+# Robot-facing targets are intentionally narrower than the full room bounds.
+# The low-X side is the empty/open wall, so front/back target points stay away
+# from that opening and the open side is never a selectable facing layout.
+OPEN_WALL_NAMES = ("left_open",)
+FRONT_BACK_WALL_TARGET_X_MIN = -10.0
+FRONT_BACK_WALL_TARGET_X_MAX = -5.0
+RIGHT_WALL_TARGET_Y_MIN = -9.0
+RIGHT_WALL_TARGET_Y_MAX = -6.0
+ROBOT_FACING_MAX_YAW_OFFSET_RAD = math.radians(15.0)
+
+
+@dataclass(frozen=True)
+class RobotFacingLayout:
+    """Robot/table placement mode that keeps the robot facing a room wall.
+
+    If target_axis is "y", wall points are sampled as (sample, fixed_coord).
+    If target_axis is "x", wall points are sampled as (fixed_coord, sample).
+    """
+    name: str
+    wall: str
+    target_axis: str
+    fixed_coord: float
+    sample_min: float
+    sample_max: float
+    yaw_center: float
+
+
+ROBOT_FACING_LAYOUTS: List[RobotFacingLayout] = [
+    # Robot sees the front wall, with the back wall behind it.
+    RobotFacingLayout(
+        name="face_front_wall",
+        wall="front",
+        target_axis="y",
+        fixed_coord=FRONT_WALL_LINE_Y,
+        sample_min=FRONT_BACK_WALL_TARGET_X_MIN,
+        sample_max=FRONT_BACK_WALL_TARGET_X_MAX,
+        yaw_center=math.pi / 2,
+    ),
+    # Robot sees the back wall, with the front wall behind it.
+    RobotFacingLayout(
+        name="face_back_wall",
+        wall="back",
+        target_axis="y",
+        fixed_coord=BACK_WALL_LINE_Y,
+        sample_min=FRONT_BACK_WALL_TARGET_X_MIN,
+        sample_max=FRONT_BACK_WALL_TARGET_X_MAX,
+        yaw_center=-math.pi / 2,
+    ),
+    # Robot sees the side wall at the high-X edge of the room.
+    RobotFacingLayout(
+        name="face_right_wall",
+        wall="right",
+        target_axis="x",
+        fixed_coord=RIGHT_WALL_LINE_X,
+        sample_min=RIGHT_WALL_TARGET_Y_MIN,
+        sample_max=RIGHT_WALL_TARGET_Y_MAX,
+        yaw_center=0.0,
+    ),
+]
+
+
+def _validate_robot_facing_layouts() -> None:
+    """Guard against accidentally aiming the robot at the empty/open side."""
+    for layout in ROBOT_FACING_LAYOUTS:
+        if layout.wall in OPEN_WALL_NAMES:
+            raise ValueError(f"robot facing layout targets open wall: {layout}")
+        if layout.sample_min >= layout.sample_max:
+            raise ValueError(f"invalid wall target span: {layout}")
+        if layout.target_axis == "y":
+            if not (ROOM_Y_MIN <= layout.fixed_coord <= ROOM_Y_MAX):
+                raise ValueError(f"wall target y outside room: {layout}")
+            if layout.sample_min < ROOM_X_MIN or layout.sample_max > ROOM_X_MAX:
+                raise ValueError(f"wall target x span outside room: {layout}")
+        elif layout.target_axis == "x":
+            if not (ROOM_X_MIN <= layout.fixed_coord <= ROOM_X_MAX):
+                raise ValueError(f"wall target x outside room: {layout}")
+            if layout.sample_min < ROOM_Y_MIN or layout.sample_max > ROOM_Y_MAX:
+                raise ValueError(f"wall target y span outside room: {layout}")
+        else:
+            raise ValueError(f"invalid wall target axis: {layout}")
+
+
+_validate_robot_facing_layouts()
+
+# Keep this at zero for strict wall-facing placement. Increase slightly only if
+# training needs a controlled yaw perturbation around the selected wall layout.
+ROBOT_FACING_YAW_JITTER_RAD = 0.0
 
 # ============================================================
 # Packing Table geometry (cloned desk)
