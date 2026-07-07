@@ -15,7 +15,13 @@ from isaaclab.envs import ManagerBasedEnv
 
 from .constants import (
     DESK_BBOX,
+    DESK_LAMP_LOCAL_X_RANGE,
+    DESK_LAMP_LOCAL_Y_RANGE,
+    DESK_LAMP_LOCAL_YAW,
+    DESK_LAMP_Z,
+    DESK_LOCAL_X_MIN,
     DESK_LOCAL_X_MAX,
+    DESK_LOCAL_Y_MIN,
     DESK_LOCAL_Y_MAX,
     DESK_OBJECT_MARGIN,
     DESK_OBJECT_Z,
@@ -35,6 +41,10 @@ from .constants import (
     TABLE_GROUP_Y_MAX,
     TABLE_GROUP_Y_MIN,
     TABLE_GROUP_MAX_TRIES,
+    TABLE_RESERVED_AREAS,
+    TABLETOP_CUBE_LOCAL_X_MAX,
+    TABLETOP_CUBE_LOCAL_X_MIN,
+    TABLETOP_CUBE_PROP_NAMES,
     TABLE_SAMPLE_X_MAX,
     TABLE_SAMPLE_X_MIN,
     TABLE_SAMPLE_Y_MAX,
@@ -75,11 +85,21 @@ _DUPLICATE_VISUAL_PROP_NAMES_TO_HIDE = {
 }
 
 _visual_props_hidden = False
+_DYNAMIC_TABLETOP_OBJECT_NAMES = {"object", "blue_cube", "yellow_cube"}
+_TABLE_RESERVED_AREA_NAMES = {area.name for area in TABLE_RESERVED_AREAS}
 
 
 def _write_root_pose_to_sim(asset, root_state: torch.Tensor, env_ids: torch.Tensor) -> None:
     """Write only root pose for kinematic props to avoid PhysX velocity errors."""
     asset.write_root_pose_to_sim(root_state[:, :7], env_ids=env_ids)
+
+
+def _write_tabletop_root_state(asset, name: str, root_state: torch.Tensor, env_ids: torch.Tensor) -> None:
+    """Write tabletop object state, preserving kinematic handling for static props."""
+    if name in _DYNAMIC_TABLETOP_OBJECT_NAMES:
+        asset.write_root_state_to_sim(root_state, env_ids=env_ids)
+    else:
+        _write_root_pose_to_sim(asset, root_state, env_ids)
 
 
 def _despawn_props(env: ManagerBasedEnv, env_ids: torch.Tensor, prop_names: list[str]) -> None:
@@ -97,7 +117,10 @@ def _despawn_props(env: ManagerBasedEnv, env_ids: torch.Tensor, prop_names: list
             continue
         asset = env.scene[name]
         root_state = build_root_state(pos, yaw, env_origins, env_ids, asset.data.default_root_state)
-        _write_root_pose_to_sim(asset, root_state, env_ids)
+        if name in _DYNAMIC_TABLETOP_OBJECT_NAMES:
+            asset.write_root_state_to_sim(root_state, env_ids=env_ids)
+        else:
+            _write_root_pose_to_sim(asset, root_state, env_ids)
         print(
             f"[PLACEMENT_DEBUG] object={name} disabled_table_or_wall_prop despawned=true",
             flush=True,
@@ -181,7 +204,12 @@ def randomize_pickplace_room_layout(
 
     # --- Phase 3: Tabletop objects (target object + distractors) ---
     tabletop_debug_obbs = _place_desk_objects(
-        env, env_ids, ["object"] + list(table_prop_names), desk_positions, desk_yaws, min_table_objects
+        env,
+        env_ids,
+        ["object"] + list(table_prop_names),
+        desk_positions,
+        desk_yaws,
+        min_table_objects,
     )
 
     debug_obbs = getattr(env, "_room_randomizer_debug_obbs", {})
@@ -219,7 +247,7 @@ def randomize_pickplace_room_layout(
         records.extend(
             {
                 "name": name,
-                "category": "tabletop",
+                "category": "table_reserved" if name in _TABLE_RESERVED_AREA_NAMES else "tabletop",
                 "box": box,
                 "z": DESK_OBJECT_Z + 0.04,
             }
@@ -720,10 +748,7 @@ def _place_desk_objects(
                     yaw = torch.tensor([0.0], device=device)
                     eid = env_ids[env_idx:env_idx+1]
                     root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
-                    if name == "object":
-                        asset.write_root_state_to_sim(root_state, env_ids=eid)
-                    else:
-                        _write_root_pose_to_sim(asset, root_state, eid)
+                    _write_tabletop_root_state(asset, name, root_state, eid)
             print(
                 f"[PLACEMENT_ERROR] env={_env_id_int(env_ids, env_idx)} "
                 f"tabletop_objects skipped table_group_not_placed=true",
@@ -732,8 +757,20 @@ def _place_desk_objects(
             continue
 
         desk_placed: List[OBB] = []
+        for area in TABLE_RESERVED_AREAS:
+            desk_placed.append(make_obb(area.center[0], area.center[1], area.bbox, area.yaw))
+            wx, wy = offset_from_yaw(
+                desk_pos[env_idx, 0].item(),
+                desk_pos[env_idx, 1].item(),
+                desk_yaw_rad[env_idx].item(),
+                area.center[0],
+                area.center[1],
+            )
+            debug_obbs[env_idx].append(
+                (area.name, make_obb(wx, wy, area.bbox, desk_yaw_rad[env_idx].item() + area.yaw))
+            )
 
-        # Keep the target cylinder in the same local table position as the regular task.
+        # Keep the target object at the same local table position as the regular task.
         if "object" in table_prop_names and "object" in env.scene.keys():
             asset = env.scene["object"]
             meta = TABLE_PROP_META["object"]
@@ -759,19 +796,76 @@ def _place_desk_objects(
 
         # How many extra tabletop props in this env.
         count = rng.randint(min_table_objects, len(extra_names))
+        visible_extra_names = set(extra_names[:count])
 
-        for i, name in enumerate(extra_names):
+        if "desk_lamp" in visible_extra_names and "desk_lamp" in env.scene.keys():
+            asset = env.scene["desk_lamp"]
+            meta = TABLE_PROP_META["desk_lamp"]
+            placed = False
+            for _ in range(100):
+                lx = rng.uniform(DESK_LAMP_LOCAL_X_RANGE[0], DESK_LAMP_LOCAL_X_RANGE[1])
+                ly = rng.uniform(DESK_LAMP_LOCAL_Y_RANGE[0], DESK_LAMP_LOCAL_Y_RANGE[1])
+                obj_yaw = DESK_LAMP_LOCAL_YAW
+
+                candidate = make_obb(lx, ly, meta.bbox, obj_yaw)
+                if not obb_overlap_any(candidate, desk_placed, margin=DESK_OBJECT_MARGIN):
+                    desk_placed.append(candidate)
+
+                    wx, wy = offset_from_yaw(
+                        desk_pos[env_idx, 0].item(),
+                        desk_pos[env_idx, 1].item(),
+                        desk_yaw_rad[env_idx].item(),
+                        lx, ly,
+                    )
+                    world_yaw = desk_yaw_rad[env_idx].item() + obj_yaw
+
+                    pos = torch.tensor([wx, wy, DESK_LAMP_Z], device=device).unsqueeze(0)
+                    yaw = torch.tensor([world_yaw], device=device)
+                    eid = env_ids[env_idx:env_idx+1]
+
+                    root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
+                    _write_tabletop_root_state(asset, "desk_lamp", root_state, eid)
+                    debug_obbs[env_idx].append(
+                        ("desk_lamp", make_obb(wx, wy, meta.bbox, world_yaw))
+                    )
+                    placed = True
+                    break
+
+            if not placed:
+                pos = torch.tensor([0.0, 0.0, DESPAWN_Z], device=device).unsqueeze(0)
+                yaw = torch.tensor([0.0], device=device)
+                eid = env_ids[env_idx:env_idx+1]
+                root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
+                _write_tabletop_root_state(asset, "desk_lamp", root_state, eid)
+                print(
+                    f"[PLACEMENT_ERROR] env={_env_id_int(env_ids, env_idx)} "
+                    f"object=desk_lamp tabletop_placement_failed despawning=true",
+                    flush=True,
+                )
+        elif "desk_lamp" in extra_names and "desk_lamp" in env.scene.keys():
+            asset = env.scene["desk_lamp"]
+            pos = torch.tensor([0.0, 0.0, DESPAWN_Z], device=device).unsqueeze(0)
+            yaw = torch.tensor([0.0], device=device)
+            eid = env_ids[env_idx:env_idx+1]
+            root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
+            _write_tabletop_root_state(asset, "desk_lamp", root_state, eid)
+
+        for name in extra_names:
+            if name == "desk_lamp":
+                continue
             if name not in env.scene.keys():
                 continue
             asset = env.scene[name]
             meta = TABLE_PROP_META[name]
-            visible = i < count
+            visible = name in visible_extra_names
 
             if visible:
                 placed = False
                 for _ in range(100):
-                    lx = rng.uniform(-DESK_LOCAL_X_MAX, DESK_LOCAL_X_MAX)
-                    ly = rng.uniform(-DESK_LOCAL_Y_MAX, DESK_LOCAL_Y_MAX)
+                    local_x_min = TABLETOP_CUBE_LOCAL_X_MIN if name in TABLETOP_CUBE_PROP_NAMES else DESK_LOCAL_X_MIN
+                    local_x_max = TABLETOP_CUBE_LOCAL_X_MAX if name in TABLETOP_CUBE_PROP_NAMES else DESK_LOCAL_X_MAX
+                    lx = rng.uniform(local_x_min, local_x_max)
+                    ly = rng.uniform(DESK_LOCAL_Y_MIN, DESK_LOCAL_Y_MAX)
                     obj_yaw = rng.uniform(0, 2 * math.pi)
 
                     candidate = make_obb(lx, ly, meta.bbox, obj_yaw)
@@ -791,10 +885,7 @@ def _place_desk_objects(
                         eid = env_ids[env_idx:env_idx+1]
 
                         root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
-                        if name == "object":
-                            asset.write_root_state_to_sim(root_state, env_ids=eid)
-                        else:
-                            _write_root_pose_to_sim(asset, root_state, eid)
+                        _write_tabletop_root_state(asset, name, root_state, eid)
                         debug_obbs[env_idx].append(
                             (name, make_obb(wx, wy, meta.bbox, world_yaw))
                         )
@@ -806,10 +897,7 @@ def _place_desk_objects(
                     yaw = torch.tensor([0.0], device=device)
                     eid = env_ids[env_idx:env_idx+1]
                     root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
-                    if name == "object":
-                        asset.write_root_state_to_sim(root_state, env_ids=eid)
-                    else:
-                        _write_root_pose_to_sim(asset, root_state, eid)
+                    _write_tabletop_root_state(asset, name, root_state, eid)
                     print(
                         f"[PLACEMENT_ERROR] env={_env_id_int(env_ids, env_idx)} "
                         f"object={name} tabletop_placement_failed despawning=true",
@@ -820,9 +908,6 @@ def _place_desk_objects(
                 yaw = torch.tensor([0.0], device=device)
                 eid = env_ids[env_idx:env_idx+1]
                 root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
-                if name == "object":
-                    asset.write_root_state_to_sim(root_state, env_ids=eid)
-                else:
-                    _write_root_pose_to_sim(asset, root_state, eid)
+                _write_tabletop_root_state(asset, name, root_state, eid)
 
     return debug_obbs

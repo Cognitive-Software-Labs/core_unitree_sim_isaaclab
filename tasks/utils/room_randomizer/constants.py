@@ -226,11 +226,18 @@ ROBOT_FACING_YAW_JITTER_RAD = 0.0
 # ============================================================
 
 # Surface bounds relative to packing table center
-DESK_LOCAL_X_MIN = -0.4
-DESK_LOCAL_X_MAX = 0.4
-DESK_LOCAL_Y_MIN = -0.2
-DESK_LOCAL_Y_MAX = 0.2
-DESK_OBJECT_MARGIN = 0.05   # margin between tabletop OBBs
+DESK_LOCAL_X_MIN = -0.55
+DESK_LOCAL_X_MAX = 0.55
+DESK_LOCAL_Y_MIN = -0.28
+DESK_LOCAL_Y_MAX = 0.28
+DESK_OBJECT_MARGIN = 0.03   # margin between tabletop OBBs
+DESK_LAMP_LOCAL_X_RANGE = (-0.55, -0.42)
+DESK_LAMP_LOCAL_Y_RANGE = (0.16, 0.26)
+DESK_LAMP_LOCAL_YAW = 0.0
+DESK_LAMP_Z = 0.82
+TABLETOP_CUBE_PROP_NAMES = {"blue_cube", "yellow_cube"}
+TABLETOP_CUBE_LOCAL_X_MIN = DESK_LOCAL_X_MIN
+TABLETOP_CUBE_LOCAL_X_MAX = 0.18
 
 # Regular pick/place local transforms relative to the packing table center.
 # These match TableCylinderSceneCfg: robot=(-0.15, 0.0), table=(0.0, 0.55),
@@ -325,10 +332,34 @@ class TablePropMeta:
     """Placement metadata for a tabletop object."""
     bbox: BBox
 
+
+@dataclass(frozen=True)
+class TableReservedArea:
+    """Table-local footprint occupied by built-in table geometry."""
+    name: str
+    center: Tuple[float, float]
+    bbox: BBox
+    yaw: float = 0.0
+
+
+TABLE_RESERVED_AREAS: List[TableReservedArea] = [
+    # Grey wire tray/container built into PackingTable.usd.
+    # Local center and footprint come from the container_h20 notes in the
+    # fixed hospital red-block task.
+    TableReservedArea(
+        name="container_h20",
+        center=(0.625, -0.094),
+        bbox=BBox(half_w=0.365, half_d=0.245),
+    ),
+]
+
+
 TABLE_PROP_META: Dict[str, TablePropMeta] = {
     "coffee_cup":   TablePropMeta(bbox=BBox(half_w=0.043, half_d=0.043)),
     "desk_lamp":    TablePropMeta(bbox=BBox(half_w=0.241, half_d=0.134)),
     "box_portable": TablePropMeta(bbox=BBox(half_w=0.195, half_d=0.145)),
+    "blue_cube":    TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05)),
+    "yellow_cube":  TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05)),
     "object":       TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05)),
 }
 

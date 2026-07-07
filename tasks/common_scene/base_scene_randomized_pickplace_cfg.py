@@ -16,7 +16,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import check_usd_path_with_timeout
 
 from tasks.common_config import CameraBaseCfg
-from tasks.utils.room_randomizer.constants import ASSET_PATHS, ROOM_SHELL_USD, FLOOR_Z, DESK_OBJECT_Z
+from tasks.utils.room_randomizer.constants import ASSET_PATHS, ROOM_SHELL_USD, FLOOR_Z, DESK_OBJECT_Z, DESK_LAMP_Z
 
 project_root = os.environ.get("PROJECT_ROOT")
 
@@ -99,6 +99,31 @@ def _kinematic_usd_cfg(usd_path: str) -> sim_utils.UsdFileCfg:
             angular_damping=10.0,
         ),
         collision_props=sim_utils.CollisionPropertiesCfg(),
+    )
+
+
+def _tabletop_cube_cfg(color: tuple[float, float, float]) -> sim_utils.CuboidCfg:
+    """Small tabletop cube with red-block-style physics."""
+    return sim_utils.CuboidCfg(
+        size=(0.06, 0.06, 0.06),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+        ),
+        mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+        collision_props=sim_utils.CollisionPropertiesCfg(
+            collision_enabled=True,
+            contact_offset=0.01,
+            rest_offset=0.0,
+        ),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, metallic=0),
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="max",
+            restitution_combine_mode="min",
+            static_friction=10,
+            dynamic_friction=1.5,
+            restitution=0.01,
+        ),
     )
 
 
@@ -211,13 +236,25 @@ class RandomizedRoomPickPlaceSceneCfg(InteractiveSceneCfg):
     desk_lamp = RigidObjectCfg(
         prim_path="/World/envs/env_.*/DeskLamp",
         spawn=_kinematic_usd_cfg(ASSET_PATHS["SM_Lamp02"]),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(-7.2, -7.3, DESK_OBJECT_Z)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(-7.2, -7.3, DESK_LAMP_Z)),
     )
 
     box_portable = RigidObjectCfg(
         prim_path="/World/envs/env_.*/BoxPortable",
         spawn=_kinematic_usd_cfg(ASSET_PATHS["SM_BoxPortableC"]),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-6.8, -7.7, DESK_OBJECT_Z)),
+    )
+
+    blue_cube = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/BlueCube",
+        spawn=_tabletop_cube_cfg((0.0, 0.2, 1.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(-7.1, -7.4, DESK_OBJECT_Z), rot=(1, 0, 0, 0)),
+    )
+
+    yellow_cube = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/YellowCube",
+        spawn=_tabletop_cube_cfg((1.0, 1.0, 0.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(-7.0, -7.6, DESK_OBJECT_Z), rot=(1, 0, 0, 0)),
     )
 
     # Cameras

@@ -22,9 +22,10 @@ WALL_PROP_NAMES = [
     "plant_b",
 ]
 
-# Keep coffee_cup and box_portable hidden for the first visual checks.
 TABLE_PROP_NAMES = [
     "desk_lamp",
+    "blue_cube",
+    "yellow_cube",
 ]
 
 
@@ -35,7 +36,7 @@ def randomize_room_for_all_envs(env) -> None:
         torch.arange(env.num_envs, device=env.device),
         wall_prop_names=WALL_PROP_NAMES,
         table_prop_names=TABLE_PROP_NAMES,
-        min_table_objects=1,
+        min_table_objects=len(TABLE_PROP_NAMES),
     )
 
 
@@ -48,7 +49,7 @@ def reset_all_then_randomize_room(env) -> None:
         env_ids,
         wall_prop_names=WALL_PROP_NAMES,
         table_prop_names=TABLE_PROP_NAMES,
-        min_table_objects=1,
+        min_table_objects=len(TABLE_PROP_NAMES),
     )
 
 
