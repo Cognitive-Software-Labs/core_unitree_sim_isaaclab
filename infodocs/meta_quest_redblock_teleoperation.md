@@ -1,5 +1,12 @@
 # Meta Quest red-block teleoperation
 
+For the complete operator manual—including installation, every task/profile,
+all runtime settings, ports and DDS topics, architecture, reset behavior,
+troubleshooting, and validation—use
+[`Meta_Quest_RedBlock_Operator_Guide.pdf`](Meta_Quest_RedBlock_Operator_Guide.pdf).
+Its maintainable source is
+[`meta_quest_redblock_operator_guide.md`](meta_quest_redblock_operator_guide.md).
+
 Use `--meta_quest` when running a red-block task with Unitree
 `xr_teleoperate`. The option enables the head and wrist cameras, selects the
 correct robot and hand DDS bridge, uses DDS action input, and publishes camera
