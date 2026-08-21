@@ -22,11 +22,14 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
     room_walls = AssetBaseCfg(
         prim_path="/World/envs/env_.*/Room",
         init_state=AssetBaseCfg.InitialStateCfg(
-            pos=[0.0, 0.0, 0],  # 房间中心点
+            # The authored hospital floor spans roughly x=[-13, -1],
+            # y=[-14, -4]. Translate its open interior around the existing
+            # calibrated robot/table workspace at the origin.
+            pos=[7.5, 7.5, 0.0],
             rot=[1.0, 0.0, 0.0, 0.0]
         ),
         spawn=UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Simple_Warehouse/warehouse.usd",  # use simple room model
+            usd_path=f"{project_root}/assets/environments/hospital_room/new_base_room.usda",
         ),
     )
     # print(f"ISAAC_NUCLEUS_DIR: {ISAAC_NUCLEUS_DIR}")
@@ -88,36 +91,36 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),   
         ),
     )
-    # Object
-    # 2. object configuration (cylinder)     
+    # Object: hospital prescription bottle
     object = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/Object",    # object in the scene
-        init_state=RigidObjectCfg.InitialStateCfg(pos=[-0.35, 0.40, 0.84], # initial position (pos) 
-                                                  rot=[1, 0, 0, 0]), # initial rotation (rot)
-        spawn=sim_utils.CylinderCfg(
-            radius=0.018,    # cylinder radius (radius)
-            height=0.35,     # cylinder height (height)
- 
+        prim_path="/World/envs/env_.*/Object",
+        # Measured PackingTable top is z~=0.794 after its -0.2 world offset.
+        # Bottle bottom is -0.055, so z=0.86 leaves 11 mm spawn clearance.
+        init_state=RigidObjectCfg.InitialStateCfg(
+            # Leftmost item in the front 1x4 task row.  The complete row stays
+            # away from the table's built-in container on the right.
+            pos=[-0.68, 0.40, 0.86],
+            rot=[1, 0, 0, 0],
+        ),
+        spawn=UsdFileCfg(
+            usd_path=f"{project_root}/assets/objects/hospital_medicine_bottle.usda",
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            ),    # rigid body properties configuration (rigid_props)
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.4),    # mass properties configuration (mass)
-            collision_props=sim_utils.CollisionPropertiesCfg(),    # collision properties configuration (collision_props)
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.15, 0.15, 0.15), metallic=1.0),    # visual material configuration (visual_material)
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                friction_combine_mode="max",    # friction combine mode
-                restitution_combine_mode="min",    # restitution combine mode
-                static_friction=1.5,    # static friction coefficient
-                dynamic_friction=1.5,    # dynamic friction coefficient
-                restitution=0.0,    # restitution coefficient (no restitution)
+                linear_damping=1.5,
+                angular_damping=3.0,
+                max_linear_velocity=5.0,
+                max_angular_velocity=10.0,
+                max_depenetration_velocity=0.25,
             ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.12),
         ),
     )
-    # Ground plane
-    # 3. ground configuration
-    # ground = AssetBaseCfg(
-    #     prim_path="/World/GroundPlane",    # ground in the scene
-    #     spawn=GroundPlaneCfg( ),    # ground configuration
-    # )
+    # Collision-only support plane.  The hospital USD floor is visual geometry
+    # and does not provide a reliable physics collider for a free-root G1.
+    ground = AssetBaseCfg(
+        prim_path="/World/GroundPlane",
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.01)),
+        spawn=GroundPlaneCfg(visible=False, size=(30.0, 30.0)),
+    )
 
     # Lights
     # 4. light configuration

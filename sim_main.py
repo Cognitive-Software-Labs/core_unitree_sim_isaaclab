@@ -369,7 +369,20 @@ def main():
             exposure=0.8,                
             focus_distance=1.2
         )
-    env.sim.reset()
+    # The environment startup above has already reset and initialized the
+    # simulation.  Repeating the SimulationContext reset with RTX cameras in
+    # headless mode can block indefinitely during offscreen initialization.
+    # The hospital Wholebody task already completed SimulationContext startup
+    # while constructing/resetting the environment.  A second reset with its
+    # four RTX cameras can block the GUI for several minutes just like the
+    # headless path, so skip that redundant reset in both modes.
+    skip_duplicate_sim_reset = (
+        getattr(args_cli, "headless", False)
+        or ("Hospital" in args_cli.task and "Wholebody" in args_cli.task)
+        or args_cli.task == "Isaac-PickPlace-Cylinder-G129-Dex1-Joint"
+    )
+    if not skip_duplicate_sim_reset:
+        env.sim.reset()
     env.reset()
     
     # create simplified control configuration
@@ -505,11 +518,11 @@ def main():
                     if reset_pose_cmd is not None:
                         try:
                             reset_category = reset_pose_cmd.get("reset_category")
-                            if (args_cli.enable_wholebody_dds and (reset_category == '1' or reset_category == '2')) or (not args_cli.enable_wholebody_dds and reset_category == '1'):
+                            if reset_category == '1':
                                 print("reset object")
                                 env_cfg.event_manager.trigger("reset_object_self", env)
                                 reset_pose_dds.write_reset_pose_command(-1)
-                            elif reset_category == '2' and not args_cli.enable_wholebody_dds:
+                            elif reset_category == '2':
                                 print("reset all")
                                 env_cfg.event_manager.trigger("reset_all_self", env)
                                 reset_pose_dds.write_reset_pose_command(-1)
@@ -540,6 +553,20 @@ def main():
                 loop_dt = current_time - last_loop_time
                 last_loop_time = current_time
                 recent_loop_times.append(loop_dt)
+
+                # Hospital demo: summon Ridgeback only after a stable grasp,
+                # choosing the same side as the hand holding the object.
+                if args_cli.task in (
+                    "Isaac-PickPlace-Hospital-G129-Dex1-Wholebody",
+                    "Isaac-PickPlace-Cylinder-G129-Dex1-Joint",
+                ):
+                    try:
+                        from tasks.g1_tasks.pick_place_cylinder_g1_29dof_dex1.pickplace_cylinder_g1_29dof_dex1_joint_env_cfg import update_ridgeback_assistant
+                        update_ridgeback_assistant(env)
+                    except Exception as e:
+                        if not getattr(env, "_ridgeback_assistant_error_reported", False):
+                            print(f"[ridgeback assistant] disabled after error: {e}", flush=True)
+                            env._ridgeback_assistant_error_reported = True
                 
                 # keep recent 100 loop times
                 if len(recent_loop_times) > 100:
