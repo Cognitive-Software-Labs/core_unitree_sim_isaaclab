@@ -4,7 +4,9 @@ Teleoperation + evaluation task that runs the red-block pick-place in the
 **hospital room** (`isaac-projects/new_base_room.usda`) instead of the default
 warehouse. The G1 uses its **left** Dex1 gripper to pick a red block off the
 tabletop and drop it into the grey mesh tray (`container_h20`, part of the
-`PackingTable.usd` in the room).
+`PackingTable.usd` in the room). The table also carries a graspable hand
+sanitizer and two prescription bottles; the bottles use the bundled
+`assets/objects/textures/hospital_pharmacy_label.png` label texture.
 
 Gym task id: **`Isaac-PickPlace-RedBlock-Hospital-G129-Dex1-Joint`**
 
@@ -27,9 +29,12 @@ ROBOT_POS  = (-7.4, -7.0, 0.76)
 OBJECT_POS = (-7.38, -7.33, 0.84)   # red block spawn centre
 ```
 
-The calibrated robot/table/object rig stays fixed, while the inherited wall
-props are spawned separately and randomized on every full environment reset.
-Their placement comes from `tasks/utils/room_randomizer/constants.py`; the
+The calibrated robot/table/object rig is the default Meta Quest layout, while
+the inherited wall props are randomized around it. DDS reset category `2` (the
+full-reset button) enables table-group randomization for the remainder of the
+session; wall furniture, the red block, and tabletop distractors then scramble
+together. Category `1` only moves the block and preserves whichever table pose
+is active. Placement comes from `tasks/utils/room_randomizer/constants.py`; the
 matching furniture baked into the room shell is hidden to avoid duplicates.
 
 **Anything that references a world coordinate had to be translated by `T` too** —

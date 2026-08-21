@@ -35,7 +35,9 @@ from tasks.utils.room_randomizer.pickplace_config import (
     WALL_PROP_NAMES,
     register_randomized_room_reset_events,
 )
+from tasks.utils.room_randomizer.constants import TABLE_FALLBACK_X, TABLE_FALLBACK_Y
 from tasks.common_scene.base_scene_pickplace_cylindercfg import (
+    hospital_hand_sanitizer_cfg,
     hospital_medicine_bottle_cfg,
     project_root,
 )
@@ -44,6 +46,8 @@ from tasks.common_scene.base_scene_pickplace_cylindercfg import (
 RIDGEBACK_USD = (
     f"{project_root}/assets/robots/ridgeback_base_only.usda"
 )
+
+FIXED_TELEOP_TABLE_POS = (TABLE_FALLBACK_X, TABLE_FALLBACK_Y, -0.2)
 
 
 @dataclass
@@ -329,8 +333,17 @@ def never_terminate(env) -> torch.Tensor:
     return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
 
 
-def reset_all_teleop_scene(env, env_ids: torch.Tensor | None = None):
-    """Execute the one authoritative randomized teleoperation reset sequence."""
+def reset_all_teleop_scene(
+    env,
+    env_ids: torch.Tensor | None,
+    randomize_table_position: bool | None = None,
+):
+    """Reset teleoperation and optionally change the persistent table switch."""
+    if randomize_table_position is not None:
+        env._teleop_randomize_table_position = bool(randomize_table_position)
+    randomize_table_position = bool(
+        getattr(env, "_teleop_randomize_table_position", False)
+    )
     if env_ids is None:
         env_ids = torch.arange(env.num_envs, device=env.device)
     base_mdp.reset_scene_to_default(env, env_ids)
@@ -340,9 +353,11 @@ def reset_all_teleop_scene(env, env_ids: torch.Tensor | None = None):
         wall_prop_names=WALL_PROP_NAMES,
         table_prop_names=HOSPITAL_TABLE_PROP_NAMES,
         min_table_objects=len(HOSPITAL_TABLE_PROP_NAMES),
+        randomize_table_position=randomize_table_position,
     )
     reset_ridgeback_assistant(env, env_ids)
-    print("[reset all] randomized teleoperation scene restored", flush=True)
+    mode = "full randomization" if randomize_table_position else "fixed table"
+    print(f"[reset all] teleoperation scene restored ({mode})", flush=True)
 
 
 ##
@@ -430,22 +445,10 @@ class ObjectTableSceneCfg(RandomizedRoomPickPlaceSceneCfg):
 
     # Additional hospital tabletop props.  They are separate rigid bodies, so
     # they provide meaningful visual clutter and can also be grasped or moved.
-    hand_sanitizer = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/HandSanitizer",
-        init_state=RigidObjectCfg.InitialStateCfg(
-            # Rightmost item in the front 1x4 row.  Its geometry still ends
-            # before the built-in container's x~=0.26 left boundary.
-            pos=(0.07, 0.40, 0.875), rot=(1.0, 0.0, 0.0, 0.0)
-        ),
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{project_root}/assets/objects/hospital_hand_sanitizer.usda",
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                linear_damping=1.5, angular_damping=3.0,
-                max_linear_velocity=5.0, max_angular_velocity=10.0,
-                max_depenetration_velocity=0.25,
-            ),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.18),
-        ),
+    hand_sanitizer: RigidObjectCfg = hospital_hand_sanitizer_cfg(
+        # Rightmost item in the front 1x4 row. Its geometry still ends before
+        # the built-in container's x~=0.26 left boundary.
+        init_pos=(0.07, 0.40, 0.875),
     )
     gauze_box = RigidObjectCfg(
         prim_path="/World/envs/env_.*/GauzeBox",
@@ -573,6 +576,9 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
     curriculum = None # curriculum manager
     def __post_init__(self):
         """Post initialization."""
+        # Isaac Lab's configclass stores inherited scene fields on the scene
+        # instance, not as accessible base-class attributes.
+        self.scene.packing_table.init_state.pos = FIXED_TELEOP_TABLE_POS
         # general settings
         self.decimation = 2
         self.episode_length_s = 20.0
@@ -605,7 +611,11 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
         ))
 
         self.event_manager.register("reset_all_self", SimpleEvent(
-            func=reset_all_teleop_scene
+            # Quest/xr_teleoperate's full-reset button sends DDS category 2.
+            # That explicit action opts back into table-group randomization.
+            func=lambda env: reset_all_teleop_scene(
+                env, None, randomize_table_position=True
+            )
         ))
 
 

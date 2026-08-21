@@ -430,6 +430,12 @@ TABLE_PROP_META: Dict[str, TablePropMeta] = {
     "hand_sanitizer": TablePropMeta(
         bbox=BBox(half_w=0.045, half_d=0.035), dynamic=True, mandatory=True
     ),
+    "medicine_bottle_a": TablePropMeta(
+        bbox=BBox(half_w=0.040, half_d=0.040), dynamic=True, mandatory=True
+    ),
+    "medicine_bottle_b": TablePropMeta(
+        bbox=BBox(half_w=0.040, half_d=0.040), dynamic=True, mandatory=True
+    ),
     "gauze_box": TablePropMeta(
         bbox=BBox(half_w=0.085, half_d=0.055), dynamic=True, mandatory=True
     ),

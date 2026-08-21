@@ -43,10 +43,17 @@ from tasks.common_scene.base_scene_randomized_pickplace_cfg import (
     RandomizedRoomPickPlaceSceneCfg,
     tabletop_cube_cfg,
 )
-from tasks.utils.room_randomizer import randomize_wall_props_layout
+from tasks.common_scene.base_scene_pickplace_cylindercfg import (
+    hospital_hand_sanitizer_cfg,
+    hospital_medicine_bottle_cfg,
+)
+from tasks.utils.room_randomizer import (
+    randomize_pickplace_room_layout,
+    randomize_wall_props_layout,
+)
+from tasks.utils.room_randomizer.room_events import reset_target_on_current_table
 from tasks.utils.room_randomizer.pickplace_config import (
     WALL_PROP_NAMES,
-    reset_all_then_randomize_wall_props,
 )
 
 project_root = os.environ.get("PROJECT_ROOT")
@@ -63,6 +70,73 @@ OBJECT_POS = (-7.38, -7.33, 0.84)       # TUNE: red block on tabletop
 
 # Success / out-of-range box (warehouse box translated by T). object inside => not done.
 SUCCESS_BOX = dict(min_x=-8.6, max_x=-6.1, min_y=-8.35, max_y=-6.1, min_height=0.5)
+REDBLOCK_TABLE_PROP_NAMES = [
+    "hand_sanitizer",
+    "medicine_bottle_a",
+    "medicine_bottle_b",
+    "blue_cube",
+    "yellow_cube",
+]
+OBJECT_RESET_POSE_RANGE = {"x": [-0.05, 0.10], "y": [-0.08, 0.06]}
+
+
+def _reset_fixed_table_target(env, env_ids: torch.Tensor) -> None:
+    """Apply the calibrated spawn jitter used before full randomization."""
+    base_mdp.reset_root_state_uniform(
+        env,
+        env_ids,
+        pose_range=OBJECT_RESET_POSE_RANGE,
+        velocity_range={},
+        asset_cfg=SceneEntityCfg("object"),
+    )
+
+
+def reset_hospital_teleop_scene(
+    env,
+    env_ids: torch.Tensor | None,
+    randomize_table_position: bool | None = None,
+) -> None:
+    """Reset the Quest scene and optionally change its persistent table switch."""
+    if randomize_table_position is not None:
+        env._teleop_randomize_table_position = bool(randomize_table_position)
+    randomize_table_position = bool(
+        getattr(env, "_teleop_randomize_table_position", False)
+    )
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+
+    base_mdp.reset_scene_to_default(env, env_ids)
+    if randomize_table_position:
+        randomize_pickplace_room_layout(
+            env,
+            env_ids,
+            wall_prop_names=WALL_PROP_NAMES,
+            table_prop_names=REDBLOCK_TABLE_PROP_NAMES,
+            min_table_objects=len(REDBLOCK_TABLE_PROP_NAMES),
+            randomize_table_position=True,
+        )
+    else:
+        randomize_wall_props_layout(env, env_ids, wall_prop_names=WALL_PROP_NAMES)
+        _reset_fixed_table_target(env, env_ids)
+
+    mode = "full randomization" if randomize_table_position else "fixed table"
+    print(f"[Meta Quest reset] hospital scene restored ({mode})", flush=True)
+
+
+def reset_hospital_target(env) -> None:
+    """Reset the block on the fixed or currently randomized packing table."""
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    if bool(getattr(env, "_teleop_randomize_table_position", False)):
+        reset_target_on_current_table(env, env_ids)
+    else:
+        _reset_fixed_table_target(env, env_ids)
+
+
+def terminate_outside_active_workspace(env) -> torch.Tensor:
+    """Keep full-randomization teleoperation under explicit Quest reset control."""
+    if bool(getattr(env, "_teleop_randomize_table_position", False)):
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    return mdp.reset_object_estimate(env, **SUCCESS_BOX)
 
 
 ##
@@ -88,6 +162,22 @@ class HospitalRedBlockSceneCfg(RandomizedRoomPickPlaceSceneCfg):
         prim_path="/World/envs/env_.*/Object",
         init_state=RigidObjectCfg.InitialStateCfg(pos=OBJECT_POS, rot=(1, 0, 0, 0)),
         spawn=tabletop_cube_cfg((1.0, 0.0, 0.0)),
+    )
+
+    # Graspable hospital props. Their authored poses form a clear row on the
+    # open side of the fixed table; full Quest randomization scrambles them
+    # collision-free with the red block and existing tabletop distractors.
+    hand_sanitizer: RigidObjectCfg = hospital_hand_sanitizer_cfg(
+        prim_path="/World/envs/env_.*/HandSanitizer",
+        init_pos=(-7.72, -7.14, 0.875),
+    )
+    medicine_bottle_a: RigidObjectCfg = hospital_medicine_bottle_cfg(
+        prim_path="/World/envs/env_.*/MedicineBottleA",
+        init_pos=(-8.20, -7.14, 0.86),
+    )
+    medicine_bottle_b: RigidObjectCfg = hospital_medicine_bottle_cfg(
+        prim_path="/World/envs/env_.*/MedicineBottleB",
+        init_pos=(-7.98, -7.14, 0.86),
     )
 
     # --- robot + cameras ---------------------------------------------------
@@ -140,7 +230,7 @@ class ObservationsCfg:
 @configclass
 class TerminationsCfg:
     # object out of the (translated) working box => reset. thresholds passed explicitly.
-    success = DoneTerm(func=mdp.reset_object_estimate, params=dict(SUCCESS_BOX))
+    success = DoneTerm(func=terminate_outside_active_workspace)
 
 
 @configclass
@@ -171,28 +261,9 @@ class RewardsCfg:
 
 @configclass
 class EventCfg:
-    randomize_wall_props = EventTermCfg(
-        func=randomize_wall_props_layout,
+    reset_teleop_scene = EventTermCfg(
+        func=reset_hospital_teleop_scene,
         mode="reset",
-        params={"wall_prop_names": WALL_PROP_NAMES},
-    )
-
-    reset_object = EventTermCfg(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            # relative spawn jitter on the OPEN tabletop only (~15x20cm).
-            # x is capped at +0.0 (block center max = OBJECT_POS.x = -7.38) so the block
-            # can NEVER spawn in the basket: the container_h20 tray footprint starts at
-            # world x=-7.24 (image-left/+x), and -7.38 clears its near edge by 11cm.
-            # The old +0.15 reached x=-7.23, landing inside the tray -> block spawned in basket.
-            # LEFT/CENTER-only spawn (标定: world-x 越负→image-x 越大→画面越右→左手够不着).
-            # 中心 OBJECT_POS(x=-7.38)=image-x318 左/中; 把 x 抖动翻到 less-negative 一侧
-            # (world x∈[-7.43,-7.28], 仍在 basket 近沿 -7.24 左侧≥4cm, 不落筐) → 块只在左/中区。
-            "pose_range": {"x": [-0.05, 0.10], "y": [-0.08, 0.06]},
-            "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object"),
-        },
     )
 
 
@@ -232,14 +303,11 @@ class PickPlaceRedBlockHospitalG129DEX1EnvCfg(ManagerBasedRLEnvCfg):
         # custom event manager (matches the warehouse red-block task)
         self.event_manager = SimpleEventManager()
         self.event_manager.register("reset_object_self", SimpleEvent(
-            func=lambda env: base_mdp.reset_root_state_uniform(
-                env,
-                torch.arange(env.num_envs, device=env.device),
-                pose_range={"x": [-0.05, 0.10], "y": [-0.08, 0.06]},  # LEFT/CENTER-only (标定见 reset_object 注释)
-                velocity_range={},
-                asset_cfg=SceneEntityCfg("object"),
-            )
+            func=reset_hospital_target
         ))
         self.event_manager.register("reset_all_self", SimpleEvent(
-            func=reset_all_then_randomize_wall_props
+            # Quest/xr_teleoperate's full-reset button sends DDS category 2.
+            func=lambda env: reset_hospital_teleop_scene(
+                env, None, randomize_table_position=True
+            )
         ))

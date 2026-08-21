@@ -219,9 +219,15 @@ def randomize_pickplace_room_layout(
     wall_prop_names: list[str],
     table_prop_names: list[str],
     min_table_objects: int = 0,
+    randomize_table_position: bool = True,
 ):
-    """Randomize the full room layout for G1 pick and place environments.
-    Uses OBB collision detection and continuous zone sampling.
+    """Randomize a room layout for G1 pick-and-place environments.
+
+    ``randomize_table_position=False`` keeps the authored table anchor while
+    still scrambling wall and tabletop props. This gives teleoperation a
+    predictable initial workspace; a full reset opts back into the original
+    table-group randomization. Uses OBB collision detection and continuous
+    zone sampling.
     """
     M = len(env_ids)
     device = env.device
@@ -248,25 +254,67 @@ def randomize_pickplace_room_layout(
 
     static_wall_obbs, spawn_boundaries = _get_room_geometry(env, env_ids)
 
-    # --- Phase 1: Wall props ---
-    wall_debug_obbs = _place_wall_props(
-        env,
-        env_ids,
-        wall_prop_names,
-        all_placed,
-        all_placed_names,
-        static_wall_obbs,
-        spawn_boundaries,
-        rng,
-    )
-
-    # --- Static RoomShell walls ---
-    static_wall_debug_obbs = _add_static_room_obstacles(static_wall_obbs, env_ids, all_placed, all_placed_names)
-
-    # --- Phase 2: Table group (desk/table + robot) ---
-    table_debug_obbs, selected_layout_names = _place_table_group(
-        env, env_ids, all_placed, all_placed_names, desk_positions, desk_yaws, spawn_boundaries, rng
-    )
+    if randomize_table_position:
+        # Preserve the established full-randomization order: furniture first,
+        # then sample a table group around the accepted furniture layout.
+        wall_debug_obbs = _place_wall_props(
+            env,
+            env_ids,
+            wall_prop_names,
+            all_placed,
+            all_placed_names,
+            static_wall_obbs,
+            spawn_boundaries,
+            rng,
+        )
+        static_wall_debug_obbs = _add_static_room_obstacles(
+            static_wall_obbs, env_ids, all_placed, all_placed_names
+        )
+        table_debug_obbs, selected_layout_names = _place_table_group(
+            env,
+            env_ids,
+            all_placed,
+            all_placed_names,
+            desk_positions,
+            desk_yaws,
+            spawn_boundaries,
+            rng,
+            randomize_position=True,
+        )
+    else:
+        # Reserve the fixed table/robot/Ridgeback group before placing wall
+        # furniture so randomized props cannot overlap the teleop workspace.
+        static_counts = [len(records) for records in static_wall_obbs]
+        static_wall_debug_obbs = _add_static_room_obstacles(
+            static_wall_obbs, env_ids, all_placed, all_placed_names
+        )
+        table_debug_obbs, selected_layout_names = _place_table_group(
+            env,
+            env_ids,
+            all_placed,
+            all_placed_names,
+            desk_positions,
+            desk_yaws,
+            spawn_boundaries,
+            rng,
+            randomize_position=False,
+        )
+        # Wall props may intentionally touch their supporting room wall. Keep
+        # the fixed table group in the collision set, but let the dedicated
+        # wall-support checks handle static RoomShell geometry.
+        for env_idx, static_count in enumerate(static_counts):
+            del all_placed[env_idx][:static_count]
+            del all_placed_names[env_idx][:static_count]
+        wall_debug_obbs = _place_wall_props(
+            env,
+            env_ids,
+            wall_prop_names,
+            all_placed,
+            all_placed_names,
+            static_wall_obbs,
+            spawn_boundaries,
+            rng,
+        )
 
     # --- Phase 3: Tabletop objects (target object + distractors) ---
     tabletop_debug_obbs, tabletop_placements = _place_desk_objects(
@@ -819,9 +867,16 @@ def _place_wall_props(
             _print_obb_debug(name, env_id, box)
         for i, a_box in enumerate(all_placed[env_idx]):
             for j, b_box in enumerate(all_placed[env_idx][i + 1:], start=i + 1):
+                a_name = all_placed_names[env_idx][i]
+                b_name = all_placed_names[env_idx][j]
+                if (
+                    a_name.startswith(_RIDGEBACK_GEOMETRY_PREFIX)
+                    and b_name.startswith(_RIDGEBACK_GEOMETRY_PREFIX)
+                ) or {a_name, b_name} == {"packing_table", "robot"}:
+                    # These are intentional overlaps inside the reserved table
+                    # group, not wall-prop placement failures.
+                    continue
                 if obb_overlap(a_box, b_box, margin=OBB_PLACEMENT_MARGIN):
-                    a_name = all_placed_names[env_idx][i]
-                    b_name = all_placed_names[env_idx][j]
                     print(
                         f"[PLACEMENT_ERROR] env={env_id} a={a_name} b={b_name} overlap "
                         f"{a_name}_pos=({a_box[0]:+.3f},{a_box[1]:+.3f}) {a_name}_yaw={a_box[4]:+.3f} "
@@ -906,6 +961,34 @@ def _make_table_group_from_robot(
     ]
     table_obbs.extend(_make_ridgeback_group(rx, ry, robot_yaw))
     return table_obbs, (dx, dy), table_yaw
+
+
+def _make_table_group_from_table(
+    dx: float,
+    dy: float,
+    table_yaw: float,
+) -> list[tuple[str, OBB]]:
+    """Build the complete group from an authored fixed table transform."""
+    rx, ry = offset_from_yaw(
+        dx,
+        dy,
+        table_yaw,
+        ROBOT_ORBIT_OFFSET[0],
+        ROBOT_ORBIT_OFFSET[1],
+    )
+    robot_yaw = table_yaw + math.pi / 2
+    table_obbs = [
+        ("packing_table", make_obb(dx, dy, DESK_BBOX, table_yaw)),
+        ("robot", make_obb(rx, ry, ROBOT_BBOX, robot_yaw)),
+    ]
+    table_obbs.extend(_make_ridgeback_group(rx, ry, robot_yaw))
+    return table_obbs
+
+
+def _quat_wxyz_yaw(quat: torch.Tensor) -> float:
+    """Return Z-axis yaw from one Isaac Lab ``(w, x, y, z)`` quaternion."""
+    w, x, y, z = (float(value) for value in quat)
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def _normalize_angle(angle: float) -> float:
@@ -1068,6 +1151,7 @@ def _place_table_group(
     desk_yaws: torch.Tensor,
     spawn_boundaries: List[List[tuple[str, OBB]]],
     rng: random.Random,
+    randomize_position: bool = True,
 ) -> tuple[list[list[tuple[str, OBB]]], list[str]]:
     M = len(env_ids)
     device = env.device
@@ -1075,31 +1159,58 @@ def _place_table_group(
     group_placed_mask = torch.zeros(M, dtype=torch.bool, device=device)
     final_table_obbs: list[list[tuple[str, OBB]]] = [[] for _ in range(M)]
     selected_layout_names = ["none" for _ in range(M)]
+    desk_asset = env.scene["packing_table"]
 
     for env_idx in range(M):
         success = False
         selected_obbs: list[tuple[str, OBB]] = []
         selected_layout_name = "none"
 
-        for _ in range(TABLE_GROUP_MAX_TRIES):
-            rx, ry, robot_yaw, layout = _sample_wall_facing_robot_pose(rng)
-
-            table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(rx, ry, robot_yaw)
+        if not randomize_position:
+            env_id = _env_id_int(env_ids, env_idx)
+            default_state = desk_asset.data.default_root_state[env_id]
+            origin = env_origins[env_id]
+            dx = float(default_state[0] - origin[0])
+            dy = float(default_state[1] - origin[1])
+            dyaw = _quat_wxyz_yaw(default_state[3:7])
+            table_obbs = _make_table_group_from_table(dx, dy, dyaw)
             valid, _ = _validate_table_group(
                 table_obbs, all_placed[env_idx], all_placed_names[env_idx], spawn_boundaries[env_idx]
             )
-            if not valid:
-                continue
+            if valid:
+                desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
+                desk_yaws[env_idx] = dyaw
+                selected_obbs = table_obbs
+                selected_layout_name = "fixed_teleop"
+                success = True
+            else:
+                print(
+                    f"[PLACEMENT_ERROR] env={env_id} fixed_table_group_invalid=true",
+                    flush=True,
+                )
+        else:
+            for _ in range(TABLE_GROUP_MAX_TRIES):
+                rx, ry, robot_yaw, layout = _sample_wall_facing_robot_pose(rng)
 
-            # Valid!
-            desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
-            desk_yaws[env_idx] = dyaw
-            selected_obbs = table_obbs
-            selected_layout_name = layout.name
-            success = True
-            break
+                table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(rx, ry, robot_yaw)
+                valid, _ = _validate_table_group(
+                    table_obbs,
+                    all_placed[env_idx],
+                    all_placed_names[env_idx],
+                    spawn_boundaries[env_idx],
+                )
+                if not valid:
+                    continue
 
-        if not success:
+                # Valid!
+                desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
+                desk_yaws[env_idx] = dyaw
+                selected_obbs = table_obbs
+                selected_layout_name = layout.name
+                success = True
+                break
+
+        if not success and randomize_position:
             # Fallback
             fallback_issues: list[str] = []
             for _ in range(TABLE_GROUP_MAX_TRIES):
@@ -1155,7 +1266,6 @@ def _place_table_group(
             )
 
     # Get default Z coordinates dynamically from env assets
-    desk_asset = env.scene["packing_table"]
     desk_default_z = (desk_asset.data.default_root_state[0, 2] - env_origins[0, 2]).item()
     desk_positions[:, 2] = desk_default_z
 

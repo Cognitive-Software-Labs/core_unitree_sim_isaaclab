@@ -61,6 +61,14 @@ TABLE_OBJECT_NAMES = (
     "gauze_box",
     "specimen_cup",
 )
+REDBLOCK_TABLE_OBJECT_NAMES = (
+    "object",
+    "hand_sanitizer",
+    "medicine_bottle_a",
+    "medicine_bottle_b",
+    "blue_cube",
+    "yellow_cube",
+)
 
 
 def _spawn_boundary_axis(box):
@@ -148,8 +156,9 @@ def _wall_supports(zone, wall):
     )
 
 
-def _place_walls(rng, static_walls, boundaries):
+def _place_walls(rng, static_walls, boundaries, reserved=()):
     placed = []
+    collision_boxes = list(reserved)
     records = []
     names = sorted(C.WALL_PROP_META, key=lambda name: not C.WALL_PROP_META[name].tall)
     for name in names:
@@ -173,11 +182,12 @@ def _place_walls(rng, static_walls, boundaries):
                 for _, wall in static_walls
             ):
                 continue
-            if obb_overlap_any(candidate, placed, margin=C.OBB_PLACEMENT_MARGIN):
+            if obb_overlap_any(candidate, collision_boxes, margin=C.OBB_PLACEMENT_MARGIN):
                 continue
             selected = candidate
             selected_wall = zone.wall
             placed.append(candidate)
+            collision_boxes.append(candidate)
             break
         records.append({"name": name, "wall": selected_wall, "box": selected})
     return placed, records
@@ -268,11 +278,11 @@ def _valid_group(group, obstacles, boundaries):
     return True
 
 
-def _place_tabletop(rng, table_box, boundaries):
+def _place_tabletop(rng, table_box, boundaries, table_object_names=TABLE_OBJECT_NAMES):
     table_x, table_y, _, _, table_yaw = table_box
     occupied = [make_obb(area.center[0], area.center[1], area.bbox, area.yaw) for area in C.TABLE_RESERVED_AREAS]
     placements = {}
-    for name in TABLE_OBJECT_NAMES:
+    for name in table_object_names:
         meta = C.TABLE_PROP_META[name]
         selected = None
         for _ in range(300):
@@ -307,7 +317,7 @@ def _place_tabletop(rng, table_box, boundaries):
     return placements
 
 
-def randomize_one_room(seed_or_rng):
+def randomize_one_room(seed_or_rng, table_object_names=TABLE_OBJECT_NAMES):
     rng = seed_or_rng if isinstance(seed_or_rng, random.Random) else random.Random(seed_or_rng)
     static_walls = [
         (item.name, make_obb(item.center[0], item.center[1], item.bbox, item.yaw))
@@ -328,9 +338,47 @@ def randomize_one_room(seed_or_rng):
             break
     if group is None:
         raise AssertionError("could not place table/robot/Ridgeback group")
-    tabletop = _place_tabletop(rng, group["packing_table"], boundaries)
+    tabletop = _place_tabletop(
+        rng, group["packing_table"], boundaries, table_object_names
+    )
     return {
         "layout": layout_name,
+        "walls": wall_records,
+        "static_walls": static_walls,
+        "group": group,
+        "tabletop": tabletop,
+    }
+
+
+def randomize_fixed_table_room(seed_or_rng):
+    """Scramble props around the stable teleoperation table anchor."""
+    rng = seed_or_rng if isinstance(seed_or_rng, random.Random) else random.Random(seed_or_rng)
+    static_walls = [
+        (item.name, make_obb(item.center[0], item.center[1], item.bbox, item.yaw))
+        for item in C.STATIC_ROOM_OBSTACLES
+    ]
+    boundaries = [
+        (item.name, make_obb(item.center[0], item.center[1], item.bbox, item.yaw))
+        for item in C.FALLBACK_NO_SPAWN_BOUNDARIES
+    ]
+    table_x, table_y, table_yaw = C.TABLE_FALLBACK_X, C.TABLE_FALLBACK_Y, 0.0
+    robot_x, robot_y = offset_from_yaw(
+        table_x, table_y, table_yaw, *C.ROBOT_ORBIT_OFFSET
+    )
+    robot_yaw = table_yaw + math.pi / 2
+    group = {
+        "packing_table": make_obb(table_x, table_y, C.DESK_BBOX, table_yaw),
+        "robot": make_obb(robot_x, robot_y, C.ROBOT_BBOX, robot_yaw),
+    }
+    group.update(_ridgeback_group(robot_x, robot_y, robot_yaw))
+    if not _valid_group(group, [box for _, box in static_walls], boundaries):
+        raise AssertionError("fixed teleoperation table group is invalid")
+    wall_boxes, wall_records = _place_walls(
+        rng, static_walls, boundaries, reserved=group.values()
+    )
+    tabletop = _place_tabletop(rng, group["packing_table"], boundaries)
+    return {
+        "layout": "fixed_teleop",
         "walls": wall_records,
         "static_walls": static_walls,
         "group": group,
@@ -391,6 +439,19 @@ def run_geometry_tests(layout_count=1000):
         after = room["tabletop"]["object"]["world"]
         assert before != after, f"seed {seed}: target respawn did not move"
 
+        fixed_room = randomize_fixed_table_room(0xF17ED + seed)
+        _assert_valid(fixed_room, f"fixed-{seed}")
+        assert fixed_room["group"]["packing_table"][:2] == (
+            C.TABLE_FALLBACK_X,
+            C.TABLE_FALLBACK_Y,
+        ), f"seed {seed}: fixed teleoperation table moved"
+
+        redblock_room = randomize_one_room(
+            0xB10C0 + seed, REDBLOCK_TABLE_OBJECT_NAMES
+        )
+        _assert_valid(redblock_room, f"redblock-{seed}")
+        assert set(redblock_room["tabletop"]) == set(REDBLOCK_TABLE_OBJECT_NAMES)
+
     same_a = randomize_one_room(123456)
     same_b = randomize_one_room(123456)
     different = randomize_one_room(123457)
@@ -403,13 +464,20 @@ def run_geometry_tests(layout_count=1000):
     _assert_valid(reset_b, "full-reset")
     assert reset_a != reset_b, "full reset did not produce a new valid layout"
 
+    fixed_a = randomize_fixed_table_room(123456)
+    fixed_b = randomize_fixed_table_room(123457)
+    assert fixed_a["group"] == fixed_b["group"], "fixed table group changed between resets"
+    assert fixed_a["walls"] != fixed_b["walls"], "fixed mode did not scramble wall props"
+    assert fixed_a["tabletop"] != fixed_b["tabletop"], "fixed mode did not scramble tabletop props"
+
 
 def main():
     layout_count = 1000
     run_geometry_tests(layout_count)
     print(
         f"PASS: {layout_count} deterministic layouts, Ridgeback corridors, "
-        "tabletop placements, respawn, reset, and seed reproducibility"
+        "fixed-table teleop layouts, tabletop placements, respawn, reset, "
+        "and seed reproducibility"
     )
 
 

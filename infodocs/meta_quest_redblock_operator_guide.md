@@ -412,8 +412,8 @@ This split keeps network callbacks outside the real-time simulation loop: DDS wo
 
 The reset topic accepts categories through the String payload on `rt/reset_pose/cmd`:
 
-- Category `1`: object-only reset. The red block respawns collision-free on the current randomized table. The room, robot/table group, Ridgeback waiting transform, and tabletop layout remain the current layout.
-- Category `2`: full-scene reset. The shared full-reset path restores defaults, randomizes walls/furniture and the robot/table/Ridgeback group, places target/tabletop objects, resets Ridgeback joints/state machine, clears teleoperation timers, resets velocities, and preserves camera initialization behavior.
+- Category `1`: object-only reset. Before full randomization is enabled, the red block uses the calibrated fixed-table spawn region. Afterward it respawns collision-free on the current randomized table; the rest of the layout is preserved.
+- Category `2`: full-scene reset and table-randomization switch. The hospital Quest task starts with its table fixed at the calibrated location. Pressing the full-reset button enables table-group randomization for the remainder of the session, then restores defaults, randomizes walls/furniture and the robot/table group, and places the target/tabletop objects.
 
 The randomized hospital task stores per-environment geometry in the room layout state. Robot pose/yaw, packing-table pose/yaw, target table-local pose, Ridgeback waiting/staging/delivery poses, selected wall layout, and tabletop placements share that source of truth. Teleoperation resets and Ridgeback assistance therefore follow the current layout instead of fixed world coordinates.
 

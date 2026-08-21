@@ -19,10 +19,11 @@ and Ridgeback now share one per-environment layout state.
   intentionally inactive in this task, so object-count behavior is explicit.
 - Uses the current table transform for manual target reset, dropped-object
   respawn, post-delivery reset, initial reset, and full-scene reset.
-- Uses one full-reset function for native Isaac Lab resets and DDS
-  `reset_all_self`; it restores defaults, randomizes the room/group/tabletop,
-  resets Ridgeback joints/state, and clears stale timers without calling a
-  second simulation reset.
+- Uses one reset function with a persistent table-randomization switch. The
+  initial Meta Quest/DDS teleoperation layout keeps the table at the validated
+  hospital anchor while wall and tabletop props still scramble. DDS reset
+  category `2` (the full-reset button) enables full table/robot/Ridgeback-group
+  randomization for that reset and subsequent resets.
 - Resolves hand side and Ridgeback routes in the randomized G1 frame and
   returns to the stored waiting pose.
 - Restricts DDS/Ridgeback teleoperation to one environment with a clear error,
@@ -68,10 +69,13 @@ are used for RTX-camera startup checks; keep `--enable_cameras` enabled.
 On a GPU host with the complete downloaded asset bundle, validate each task in
 both GUI and headless modes:
 
-1. Start the task and confirm the first randomized layout appears once.
+1. Start the task and confirm the table stays at `(-7.5, -7.5)` while wall and
+   tabletop props are randomized.
 2. Send DDS reset category `1`; only the target must move, and it must remain
    on the current packing table with zero velocity.
-3. Send DDS reset category `2`; the scene must generate one new valid layout.
+3. Send DDS reset category `2`; the table-randomization switch must turn on and
+   the scene must generate one new valid table/robot/Ridgeback layout with all
+   wall and tabletop props scrambled as usual.
 4. Drop the target below the respawn threshold and confirm it respawns on the
    current table rather than at an authored world pose.
 5. Grasp with each hand in turn; confirm staging, delivery, basket placement,

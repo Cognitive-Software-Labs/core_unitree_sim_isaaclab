@@ -126,6 +126,28 @@ class MetaQuestRedBlockTests(unittest.TestCase):
         self.assertTrue(all(camera["enable_zmq"] for camera in configured.values()))
         self.assertTrue(all(not camera["enable_webrtc"] for camera in configured.values()))
 
+    def test_hospital_full_reset_enables_table_randomization(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        config_path = (
+            repo_root
+            / "tasks/g1_tasks/pickplace_redblock_hospital_g1_29dof_dex1"
+            / "pickplace_redblock_hospital_g1_29dof_dex1_joint_env_cfg.py"
+        )
+        source = config_path.read_text(encoding="utf-8")
+
+        self.assertIn("randomize_table_position: bool | None = None", source)
+        self.assertIn("env._teleop_randomize_table_position", source)
+        self.assertIn("env_ids: torch.Tensor | None,", source)
+        self.assertNotIn('params={"randomize_table_position": None}', source)
+        self.assertRegex(
+            source,
+            r'register\("reset_all_self"[\s\S]+randomize_table_position=True',
+        )
+        self.assertRegex(
+            source,
+            r'def reset_hospital_target[\s\S]+reset_target_on_current_table',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
