@@ -22,9 +22,11 @@ from . import mdp
 
 from tasks.common_config import  G1RobotPresets, CameraPresets  # isort: skip
 # import public scene configuration
-import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
-from tasks.common_scene.base_scene_randomized_pickplace_cfg import RandomizedRoomPickPlaceSceneCfg
+from tasks.common_scene.base_scene_randomized_pickplace_cfg import (
+    RandomizedRoomPickPlaceSceneCfg,
+    tabletop_cube_cfg,
+)
 from tasks.utils.room_randomizer import randomize_pickplace_room_layout
 from tasks.utils.room_randomizer.constants import ROOM_X_MAX, ROOM_X_MIN, ROOM_Y_MAX, ROOM_Y_MIN
 from tasks.utils.room_randomizer.pickplace_config import (
@@ -48,27 +50,7 @@ class ObjectTableSceneCfg(RandomizedRoomPickPlaceSceneCfg):
     object = RigidObjectCfg(
         prim_path="/World/envs/env_.*/Object",
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.35, 0.40, 0.84), rot=(1, 0, 0, 0)),
-        spawn=sim_utils.CuboidCfg(
-            size=(0.06, 0.06, 0.06),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,
-                retain_accelerations=False,
-            ),
-            mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-            collision_props=sim_utils.CollisionPropertiesCfg(
-                collision_enabled=True,
-                contact_offset=0.01,
-                rest_offset=0.0,
-            ),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), metallic=0),
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                friction_combine_mode="max",
-                restitution_combine_mode="min",
-                static_friction=10,
-                dynamic_friction=1.5,
-                restitution=0.01,
-            ),
-        ),
+        spawn=tabletop_cube_cfg((1.0, 0.0, 0.0)),
     )
 
     # Humanoid robot w/ arms higher

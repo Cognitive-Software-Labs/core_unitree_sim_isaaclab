@@ -102,27 +102,32 @@ def _kinematic_usd_cfg(usd_path: str) -> sim_utils.UsdFileCfg:
     )
 
 
-def _tabletop_cube_cfg(color: tuple[float, float, float]) -> sim_utils.CuboidCfg:
-    """Small tabletop cube with red-block-style physics."""
+def tabletop_cube_cfg(color: tuple[float, float, float]) -> sim_utils.CuboidCfg:
+    """Create a small tabletop cube tuned for stable robot handling."""
     return sim_utils.CuboidCfg(
         size=(0.06, 0.06, 0.06),
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             retain_accelerations=False,
+            linear_damping=0.05,
+            angular_damping=0.1,
+            max_linear_velocity=5.0,
+            max_angular_velocity=20.0,
+            max_depenetration_velocity=1.0,
         ),
-        mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
         collision_props=sim_utils.CollisionPropertiesCfg(
             collision_enabled=True,
-            contact_offset=0.01,
+            contact_offset=0.005,
             rest_offset=0.0,
         ),
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, metallic=0),
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="max",
             restitution_combine_mode="min",
-            static_friction=10,
-            dynamic_friction=1.5,
-            restitution=0.01,
+            static_friction=1.0,
+            dynamic_friction=0.8,
+            restitution=0.0,
         ),
     )
 
@@ -247,13 +252,13 @@ class RandomizedRoomPickPlaceSceneCfg(InteractiveSceneCfg):
 
     blue_cube = RigidObjectCfg(
         prim_path="/World/envs/env_.*/BlueCube",
-        spawn=_tabletop_cube_cfg((0.0, 0.2, 1.0)),
+        spawn=tabletop_cube_cfg((0.0, 0.2, 1.0)),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-7.1, -7.4, DESK_OBJECT_Z), rot=(1, 0, 0, 0)),
     )
 
     yellow_cube = RigidObjectCfg(
         prim_path="/World/envs/env_.*/YellowCube",
-        spawn=_tabletop_cube_cfg((1.0, 1.0, 0.0)),
+        spawn=tabletop_cube_cfg((1.0, 1.0, 0.0)),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(-7.0, -7.6, DESK_OBJECT_Z), rot=(1, 0, 0, 0)),
     )
 
