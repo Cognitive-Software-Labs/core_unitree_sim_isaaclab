@@ -66,7 +66,7 @@ project_root = os.environ.get("PROJECT_ROOT")
 TABLE_POS = (-7.5, -7.5, -0.2)          # TUNE: open interior of new_base_room.usda
 ROBOT_POS = (-7.4, -7.0, 0.76)          # +Y of table by 0.5 m, same as warehouse
 ROBOT_ROT = (0.7071, 0.0, 0.0, -0.7071)  # yaw -90deg, robot faces the table
-OBJECT_POS = (-7.38, -7.33, 0.84)       # TUNE: red block on tabletop
+OBJECT_POS = (-7.38, -7.25, 0.84)       # TUNE: red block closer to G1
 
 # Success / out-of-range box (warehouse box translated by T). object inside => not done.
 SUCCESS_BOX = dict(min_x=-8.6, max_x=-6.1, min_y=-8.35, max_y=-6.1, min_height=0.5)
@@ -130,6 +130,22 @@ def reset_hospital_target(env) -> None:
         reset_target_on_current_table(env, env_ids)
     else:
         _reset_fixed_table_target(env, env_ids)
+
+
+def reset_hospital_room_fixed_table(env) -> None:
+    """Scramble the hospital room while restoring the authored table anchor."""
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    env._teleop_randomize_table_position = False
+    base_mdp.reset_scene_to_default(env, env_ids)
+    randomize_pickplace_room_layout(
+        env,
+        env_ids,
+        wall_prop_names=WALL_PROP_NAMES,
+        table_prop_names=REDBLOCK_TABLE_PROP_NAMES,
+        min_table_objects=len(REDBLOCK_TABLE_PROP_NAMES),
+        randomize_table_position=False,
+    )
+    print("[Meta Quest reset] hospital room scrambled (fixed table)", flush=True)
 
 
 def terminate_outside_active_workspace(env) -> torch.Tensor:
@@ -311,3 +327,7 @@ class PickPlaceRedBlockHospitalG129DEX1EnvCfg(ManagerBasedRLEnvCfg):
                 env, None, randomize_table_position=True
             )
         ))
+        self.event_manager.register(
+            "reset_room_fixed_table_self",
+            SimpleEvent(func=reset_hospital_room_fixed_table),
+        )

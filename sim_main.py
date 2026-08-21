@@ -549,6 +549,10 @@ def main():
                                 print("reset all")
                                 env_cfg.event_manager.trigger("reset_all_self", env)
                                 reset_pose_dds.write_reset_pose_command(-1)
+                            elif reset_category == '3':
+                                print("reset room with fixed table")
+                                env_cfg.event_manager.trigger("reset_room_fixed_table_self", env)
+                                reset_pose_dds.write_reset_pose_command(-1)
                         except Exception as e:
                             print(f"Failed to write reset pose command: {e}")
                             raise e

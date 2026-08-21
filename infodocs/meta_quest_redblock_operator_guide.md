@@ -285,7 +285,8 @@ https://XR_HOST_IP:8012/?ws=wss://XR_HOST_IP:8012
 7. Confirm that the robot's head-camera view appears. Verify wrist views if the selected Vuer mode presents them.
 8. Stand in a clear area. Align your arms with the robot's displayed initial pose to avoid a command discontinuity.
 9. In the xr_teleoperate terminal, press `r` to begin teleoperation.
-10. Press `q` in the xr_teleoperate terminal to quit. Stop the simulator with `Ctrl+C` after the XR process has shut down.
+10. Press **Y** on the left Quest controller to reset and scramble the room while keeping the table fixed. Press **B** on the right controller to enable full table-group randomization and reset the room.
+11. Press `q` in the xr_teleoperate terminal to quit. Stop the simulator with `Ctrl+C` after the XR process has shut down.
 
 ### Recording
 
@@ -413,7 +414,8 @@ This split keeps network callbacks outside the real-time simulation loop: DDS wo
 The reset topic accepts categories through the String payload on `rt/reset_pose/cmd`:
 
 - Category `1`: object-only reset. Before full randomization is enabled, the red block uses the calibrated fixed-table spawn region. Afterward it respawns collision-free on the current randomized table; the rest of the layout is preserved.
-- Category `2`: full-scene reset and table-randomization switch. The hospital Quest task starts with its table fixed at the calibrated location. Pressing the full-reset button enables table-group randomization for the remainder of the session, then restores defaults, randomizes walls/furniture and the robot/table group, and places the target/tabletop objects.
+- Category `2` / Quest **B**: full-scene reset and table-randomization switch. The hospital Quest task starts with its table fixed at the calibrated location. Pressing B enables table-group randomization for the remainder of the session, then restores defaults, randomizes walls/furniture and the robot/table group, and places the target/tabletop objects.
+- Category `3` / Quest **Y**: fixed-table room reset. It restores defaults, returns the table-randomization switch to fixed mode, keeps the table at its authored anchor, and scrambles wall furniture plus tabletop objects around that fixed workspace.
 
 The randomized hospital task stores per-environment geometry in the room layout state. Robot pose/yaw, packing-table pose/yaw, target table-local pose, Ridgeback waiting/staging/delivery poses, selected wall layout, and tabletop placements share that source of truth. Teleoperation resets and Ridgeback assistance therefore follow the current layout instead of fixed world coordinates.
 
@@ -422,8 +424,8 @@ The randomized hospital task stores per-environment geometry in the room layout 
 The repository includes reset publishers for diagnostics. Run them only while the simulator is listening on the intended DDS domain and no physical robot shares that command environment.
 
 ```bash
-# Inspect the script before use; it publishes to rt/reset_pose/cmd.
-python reset_pose_test.py
+# Inspect the helper before use; it publishes to rt/reset_pose/cmd.
+python tools/trigger_reset.py --type room-fixed-table
 ```
 
 For production Quest operation, prefer xr_teleoperate's normal simulated reset/recording flow or the task's native reset behavior so each reset is issued exactly once.

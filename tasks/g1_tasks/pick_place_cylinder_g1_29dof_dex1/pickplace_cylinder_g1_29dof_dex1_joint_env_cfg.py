@@ -617,6 +617,14 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
                 env, None, randomize_table_position=True
             )
         ))
+        self.event_manager.register(
+            "reset_room_fixed_table_self",
+            SimpleEvent(
+                func=lambda env: reset_all_teleop_scene(
+                    env, None, randomize_table_position=False
+                )
+            ),
+        )
 
 
 @configclass

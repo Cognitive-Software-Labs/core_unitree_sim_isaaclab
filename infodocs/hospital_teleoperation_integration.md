@@ -23,7 +23,8 @@ and Ridgeback now share one per-environment layout state.
   initial Meta Quest/DDS teleoperation layout keeps the table at the validated
   hospital anchor while wall and tabletop props still scramble. DDS reset
   category `2` (the full-reset button) enables full table/robot/Ridgeback-group
-  randomization for that reset and subsequent resets.
+  randomization for that reset and subsequent resets. Category `3` restores
+  fixed-table mode while still scrambling the room and tabletop objects.
 - Resolves hand side and Ridgeback routes in the randomized G1 frame and
   returns to the stored waiting pose.
 - Restricts DDS/Ridgeback teleoperation to one environment with a clear error,
@@ -76,11 +77,13 @@ both GUI and headless modes:
 3. Send DDS reset category `2`; the table-randomization switch must turn on and
    the scene must generate one new valid table/robot/Ridgeback layout with all
    wall and tabletop props scrambled as usual.
-4. Drop the target below the respawn threshold and confirm it respawns on the
+4. Send DDS reset category `3`; wall and tabletop props must scramble while
+   the table returns to and remains at its authored fixed pose.
+5. Drop the target below the respawn threshold and confirm it respawns on the
    current table rather than at an authored world pose.
-5. Grasp with each hand in turn; confirm staging, delivery, basket placement,
+6. Grasp with each hand in turn; confirm staging, delivery, basket placement,
    return, and collision-free target respawn.
-6. Run at least 100 consecutive full resets and check logs for
+7. Run at least 100 consecutive full resets and check logs for
    `PLACEMENT_ERROR`, Python/config/import errors, and duplicate reset/render
    stalls.
 7. Confirm DDS joint commands are received for fixed-base and Wholebody

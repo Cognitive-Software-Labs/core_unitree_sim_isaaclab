@@ -13,17 +13,26 @@ def main():
     parser.add_argument(
         "--type", 
         type=str, 
-        choices=["object", "all"], 
+        choices=["object", "all", "room-fixed-table"],
         default="all", 
-        help="Reset type: 'object' (re-randomize layout, keep current simulation state) or 'all' (reset scene defaults and re-randomize)."
+        help=(
+            "Reset type: 'object' resets only the target, 'all' enables full "
+            "randomization, and 'room-fixed-table' scrambles the room while "
+            "keeping the table at its authored pose."
+        ),
     )
     parser.add_argument("--domain", type=int, default=1, help="DDS Domain ID (must match ChannelFactoryInitialize(X) in sim_main.py, default is 1)")
     args = parser.parse_args()
 
     # Define code categories matching sim_main.py:
     # "1" = reset object / re-randomize layout
-    # "2" = reset all / default restore and re-randomize
-    category_code = "1" if args.type == "object" else "2"
+    # "2" = reset all / default restore and full randomization
+    # "3" = reset room and tabletop objects while preserving the table pose
+    category_code = {
+        "object": "1",
+        "all": "2",
+        "room-fixed-table": "3",
+    }[args.type]
 
     print(f"Initializing DDS on domain {args.domain}...")
     ChannelFactoryInitialize(args.domain)

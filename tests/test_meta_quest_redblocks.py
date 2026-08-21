@@ -148,6 +148,32 @@ class MetaQuestRedBlockTests(unittest.TestCase):
             r'def reset_hospital_target[\s\S]+reset_target_on_current_table',
         )
 
+    def test_quest_fixed_table_room_reset_is_routed_to_both_hospital_tasks(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        sim_source = (repo_root / "sim_main.py").read_text(encoding="utf-8")
+        redblock_source = (
+            repo_root
+            / "tasks/g1_tasks/pickplace_redblock_hospital_g1_29dof_dex1"
+            / "pickplace_redblock_hospital_g1_29dof_dex1_joint_env_cfg.py"
+        ).read_text(encoding="utf-8")
+        ridgeback_source = (
+            repo_root
+            / "tasks/g1_tasks/pick_place_cylinder_g1_29dof_dex1"
+            / "pickplace_cylinder_g1_29dof_dex1_joint_env_cfg.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertRegex(
+            sim_source,
+            r"reset_category == '3'[\s\S]+reset_room_fixed_table_self",
+        )
+        for source in (redblock_source, ridgeback_source):
+            self.assertIn('"reset_room_fixed_table_self"', source)
+            self.assertIn("randomize_table_position=False", source)
+        self.assertIn(
+            "env._teleop_randomize_table_position = False",
+            redblock_source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

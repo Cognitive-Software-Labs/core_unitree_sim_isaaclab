@@ -26,7 +26,7 @@ hospital interior:
 T = (-3.2, -3.3, 0)      # warehouse coords  ->  hospital interior
 TABLE_POS  = (-7.5, -7.5, -0.2)
 ROBOT_POS  = (-7.4, -7.0, 0.76)
-OBJECT_POS = (-7.38, -7.33, 0.84)   # red block spawn centre
+OBJECT_POS = (-7.38, -7.25, 0.84)   # red block spawn centre, toward G1
 ```
 
 The calibrated robot/table/object rig is the default Meta Quest layout, while
@@ -34,7 +34,10 @@ the inherited wall props are randomized around it. DDS reset category `2` (the
 full-reset button) enables table-group randomization for the remainder of the
 session; wall furniture, the red block, and tabletop distractors then scramble
 together. Category `1` only moves the block and preserves whichever table pose
-is active. Placement comes from `tasks/utils/room_randomizer/constants.py`; the
+is active. Category `3` scrambles the room and tabletop objects while returning
+the table to the calibrated fixed pose. On Quest controllers, **B** sends
+category `2` and **Y** sends category `3`. Placement comes from
+`tasks/utils/room_randomizer/constants.py`; the
 matching furniture baked into the room shell is hidden to avoid duplicates.
 
 **Anything that references a world coordinate had to be translated by `T` too** —
