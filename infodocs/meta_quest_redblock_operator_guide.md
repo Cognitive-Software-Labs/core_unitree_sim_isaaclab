@@ -320,6 +320,8 @@ Optional recording metadata includes `--task-dir`, `--task-name`, `--task-goal`,
 - `camera_write_interval = 1` unless explicitly supplied.
 - `TELEIMAGER_DISABLE_WEBRTC = 1`; ZMQ remains enabled.
 
+<!-- PAGEBREAK -->
+
 ### Performance and physics tuning
 
 - `--step_hz 100`: controller target rate, default 100 Hz.
@@ -493,6 +495,8 @@ For production Quest operation, prefer xr_teleoperate's normal simulated reset/r
 - Reduce competing GPU workload. If tuning render cadence or JPEG quality, change one setting at a time and retest latency.
 - `pass-through` display mode intentionally does not show the immersive robot view.
 
+<!-- PAGEBREAK -->
+
 ### Robot moves but hand does not
 
 - Confirm task and `--ee` match: Dex1=`dex1`, Dex3=`dex3`, Inspire=`inspire_dfx`.
@@ -587,7 +591,11 @@ Accept the certificate warning, select Virtual Reality, allow permissions, align
 - G1 Inspire: `G1_29 + inspire_dfx`; hand only.
 - H1-2 Inspire: `H1_2 + inspire_dfx`; hand only.
 
-### Source references
+<!-- PAGEBREAK -->
+
+## Document maintenance and source references
+
+### Authoritative sources
 
 - Repository implementation: `sim_main.py`, `tools/meta_quest.py`, `teleimager/src/teleimager/image_server.py`, `dds/`, and `tests/test_meta_quest_redblocks.py`.
 - Unitree xr_teleoperate: https://github.com/unitreerobotics/xr_teleoperate
@@ -601,3 +609,11 @@ python tools/build_meta_quest_pdf.py
 ```
 
 The reviewed source is `infodocs/meta_quest_redblock_operator_guide.md`; the generated artifact is `infodocs/Meta_Quest_RedBlock_Operator_Guide.pdf`.
+
+### Release checklist for future edits
+
+- Update the Markdown source first; do not hand-edit the generated PDF.
+- Regenerate the PDF and confirm its page count, A4 size, title metadata, and selectable text.
+- Run `python -m unittest tests.test_meta_quest_redblocks` after changing profiles or launch behavior.
+- Visually inspect the title page, architecture diagram, command blocks, and final page after regeneration.
+- Record new physical-headset results separately from simulator-only validation so the verification boundary remains explicit.
