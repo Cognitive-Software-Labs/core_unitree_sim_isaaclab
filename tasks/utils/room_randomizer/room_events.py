@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 import random
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 import torch
@@ -18,7 +19,6 @@ from .constants import (
     DESK_LAMP_LOCAL_X_RANGE,
     DESK_LAMP_LOCAL_Y_RANGE,
     DESK_LAMP_LOCAL_YAW,
-    DESK_LAMP_Z,
     DESK_LOCAL_X_MIN,
     DESK_LOCAL_X_MAX,
     DESK_LOCAL_Y_MIN,
@@ -28,7 +28,6 @@ from .constants import (
     DESPAWN_Z,
     FALLBACK_NO_SPAWN_BOUNDARIES,
     FLOOR_Z,
-    OBJECT_TABLE_LOCAL_OFFSET,
     OBB_PLACEMENT_MARGIN,
     ROBOT_BBOX,
     ROBOT_FACING_LAYOUTS,
@@ -36,6 +35,14 @@ from .constants import (
     ROBOT_FACING_YAW_JITTER_RAD,
     ROBOT_ORBIT_OFFSET,
     ROBOT_TABLE_MARGIN,
+    RIDGEBACK_BBOX,
+    RIDGEBACK_CORRIDOR_HALF_WIDTH,
+    RIDGEBACK_DELIVERY_ROBOT_LOCAL,
+    RIDGEBACK_GROUP_MARGIN,
+    RIDGEBACK_PLANAR_YAW,
+    RIDGEBACK_ROOT_YAW_OFFSET,
+    RIDGEBACK_STAGING_ROBOT_LOCAL,
+    RIDGEBACK_WAITING_ROBOT_LOCAL,
     RIGHT_WALL_CONTACT_CLEARANCE,
     SPAWN_BOUNDARY_TOLERANCE,
     SPAWN_REGION_SEED,
@@ -89,10 +96,51 @@ _DUPLICATE_VISUAL_PROP_NAMES_TO_HIDE = {
 }
 
 _visual_props_hidden = False
-_DYNAMIC_TABLETOP_OBJECT_NAMES = {"object", "blue_cube", "yellow_cube"}
+_DYNAMIC_TABLETOP_OBJECT_NAMES = {
+    name for name, meta in TABLE_PROP_META.items() if meta.dynamic
+}
 _TABLE_RESERVED_AREA_NAMES = {area.name for area in TABLE_RESERVED_AREAS}
 _EMPTY_USD_BOUND_ABS_LIMIT = 1.0e20
 _MIN_STATIC_WALL_HALF_EXTENT = 0.005
+
+
+@dataclass(frozen=True)
+class Pose2D:
+    """World-space planar pose, with the authored root height retained."""
+
+    position: tuple[float, float, float]
+    yaw: float
+
+
+@dataclass(frozen=True)
+class TabletopPlacement:
+    """A collision-checked pose expressed in the packing-table frame."""
+
+    name: str
+    local_pose: tuple[float, float, float, float]
+    bbox: BBox
+
+
+@dataclass
+class RoomLayoutState:
+    """Single source of truth for one randomized environment layout."""
+
+    env_id: int
+    robot_pose: Pose2D
+    packing_table_pose: Pose2D
+    target_object_local_pose: tuple[float, float, float, float]
+    ridgeback_waiting_pose: Pose2D
+    selected_wall_facing_layout: str
+    tabletop_placements: dict[str, TabletopPlacement] = field(default_factory=dict)
+    ridgeback_joint_targets: dict[str, tuple[float, float, float]] = field(default_factory=dict)
+
+
+def _room_rng(env: ManagerBasedEnv) -> random.Random:
+    """Return a persistent RNG seeded from the environment configuration."""
+    if not hasattr(env, "_room_randomizer_rng"):
+        seed = int(getattr(getattr(env, "cfg", None), "seed", 0) or 0)
+        env._room_randomizer_rng = random.Random(seed)
+    return env._room_randomizer_rng
 
 
 def _write_root_pose_to_sim(asset, root_state: torch.Tensor, env_ids: torch.Tensor) -> None:
@@ -170,13 +218,14 @@ def randomize_pickplace_room_layout(
     env_ids: torch.Tensor,
     wall_prop_names: list[str],
     table_prop_names: list[str],
-    min_table_objects: int = 1,
+    min_table_objects: int = 0,
 ):
     """Randomize the full room layout for G1 pick and place environments.
     Uses OBB collision detection and continuous zone sampling.
     """
     M = len(env_ids)
     device = env.device
+    rng = _room_rng(env)
 
     # Hide duplicate meshes inside RoomShell
     _hide_duplicate_visual_props(env_ids)
@@ -208,18 +257,19 @@ def randomize_pickplace_room_layout(
         all_placed_names,
         static_wall_obbs,
         spawn_boundaries,
+        rng,
     )
 
     # --- Static RoomShell walls ---
     static_wall_debug_obbs = _add_static_room_obstacles(static_wall_obbs, env_ids, all_placed, all_placed_names)
 
     # --- Phase 2: Table group (desk/table + robot) ---
-    table_debug_obbs = _place_table_group(
-        env, env_ids, all_placed, all_placed_names, desk_positions, desk_yaws, spawn_boundaries
+    table_debug_obbs, selected_layout_names = _place_table_group(
+        env, env_ids, all_placed, all_placed_names, desk_positions, desk_yaws, spawn_boundaries, rng
     )
 
     # --- Phase 3: Tabletop objects (target object + distractors) ---
-    tabletop_debug_obbs = _place_desk_objects(
+    tabletop_debug_obbs, tabletop_placements = _place_desk_objects(
         env,
         env_ids,
         ["object"] + list(table_prop_names),
@@ -227,6 +277,16 @@ def randomize_pickplace_room_layout(
         desk_yaws,
         spawn_boundaries,
         min_table_objects,
+        rng,
+    )
+
+    _store_layout_state(
+        env,
+        env_ids,
+        desk_positions,
+        desk_yaws,
+        selected_layout_names,
+        tabletop_placements,
     )
 
     debug_obbs = getattr(env, "_room_randomizer_debug_obbs", {})
@@ -281,6 +341,7 @@ def randomize_wall_props_layout(
 ):
     """Randomize wall props without moving the task's robot, table, or tabletop objects."""
     num_envs = len(env_ids)
+    rng = _room_rng(env)
 
     _hide_duplicate_visual_props(env_ids)
     active_wall_props = set(wall_prop_names)
@@ -302,6 +363,7 @@ def randomize_wall_props_layout(
         all_placed_names,
         static_wall_obbs,
         spawn_boundaries,
+        rng,
     )
     static_wall_debug_obbs = _add_static_room_obstacles(
         static_wall_obbs,
@@ -649,11 +711,11 @@ def _place_wall_props(
     all_placed_names: List[List[str]],
     static_wall_obbs: List[List[tuple[str, OBB]]],
     spawn_boundaries: List[List[tuple[str, OBB]]],
+    rng: random.Random,
 ) -> List[List[tuple[str, Optional[OBB]]]]:
     """Place wall props using continuous zone sampling + OBB collision."""
     M = len(env_ids)
     device = env.device
-    rng = random.Random()
 
     sorted_names = sorted(
         wall_prop_names,
@@ -776,6 +838,54 @@ def _place_wall_props(
 # Phase 2: Table group — continuous interior sampling
 # ======================================================================
 
+_RIDGEBACK_GEOMETRY_PREFIX = "ridgeback_"
+
+
+def _ridgeback_world_xy(
+    rx: float, ry: float, robot_yaw: float, robot_local_xy: tuple[float, float]
+) -> tuple[float, float]:
+    return offset_from_yaw(rx, ry, robot_yaw, robot_local_xy[0], robot_local_xy[1])
+
+
+def _swept_ridgeback_obb(start: tuple[float, float], end: tuple[float, float]) -> OBB:
+    """Conservative rectangular footprint for one straight motion segment."""
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    distance = math.hypot(dx, dy)
+    return make_obb(
+        (start[0] + end[0]) * 0.5,
+        (start[1] + end[1]) * 0.5,
+        BBox(distance * 0.5 + RIDGEBACK_BBOX.half_w, RIDGEBACK_CORRIDOR_HALF_WIDTH),
+        math.atan2(dy, dx),
+    )
+
+
+def _make_ridgeback_group(rx: float, ry: float, robot_yaw: float) -> list[tuple[str, OBB]]:
+    waiting = _ridgeback_world_xy(rx, ry, robot_yaw, RIDGEBACK_WAITING_ROBOT_LOCAL)
+    records: list[tuple[str, OBB]] = [
+        ("ridgeback_waiting", make_obb(*waiting, RIDGEBACK_BBOX, robot_yaw)),
+    ]
+    for side_name, side_sign in (("left", 1.0), ("right", -1.0)):
+        staging_local = (
+            RIDGEBACK_STAGING_ROBOT_LOCAL[0],
+            side_sign * RIDGEBACK_STAGING_ROBOT_LOCAL[1],
+        )
+        delivery_local = (
+            RIDGEBACK_DELIVERY_ROBOT_LOCAL[0],
+            side_sign * RIDGEBACK_DELIVERY_ROBOT_LOCAL[1],
+        )
+        staging = _ridgeback_world_xy(rx, ry, robot_yaw, staging_local)
+        delivery = _ridgeback_world_xy(rx, ry, robot_yaw, delivery_local)
+        records.extend(
+            [
+                (f"ridgeback_staging_{side_name}", make_obb(*staging, RIDGEBACK_BBOX, robot_yaw)),
+                (f"ridgeback_delivery_{side_name}", make_obb(*delivery, RIDGEBACK_BBOX, robot_yaw)),
+                (f"ridgeback_corridor_waiting_{side_name}", _swept_ridgeback_obb(waiting, staging)),
+                (f"ridgeback_corridor_delivery_{side_name}", _swept_ridgeback_obb(staging, delivery)),
+            ]
+        )
+    return records
+
 def _make_table_group_from_robot(
     rx: float,
     ry: float,
@@ -794,6 +904,7 @@ def _make_table_group_from_robot(
         ("packing_table", make_obb(dx, dy, DESK_BBOX, table_yaw)),
         ("robot", make_obb(rx, ry, ROBOT_BBOX, robot_yaw)),
     ]
+    table_obbs.extend(_make_ridgeback_group(rx, ry, robot_yaw))
     return table_obbs, (dx, dy), table_yaw
 
 
@@ -839,6 +950,10 @@ def _debug_table_group(env_id: int, table_obbs: list[tuple[str, OBB]], placed: L
 
     for i, (a_name, a_box) in enumerate(table_obbs):
         for b_name, b_box in table_obbs[i + 1:]:
+            if a_name.startswith(_RIDGEBACK_GEOMETRY_PREFIX) and b_name.startswith(
+                _RIDGEBACK_GEOMETRY_PREFIX
+            ):
+                continue
             if {a_name, b_name} == {"packing_table", "robot"}:
                 print(
                     f"[PLACEMENT_DEBUG] env={env_id} overlap_check "
@@ -846,7 +961,12 @@ def _debug_table_group(env_id: int, table_obbs: list[tuple[str, OBB]], placed: L
                     flush=True,
                 )
                 continue
-            margin = ROBOT_TABLE_MARGIN if {a_name, b_name} == {"packing_table", "robot"} else OBB_PLACEMENT_MARGIN
+            if a_name.startswith(_RIDGEBACK_GEOMETRY_PREFIX) or b_name.startswith(
+                _RIDGEBACK_GEOMETRY_PREFIX
+            ):
+                margin = RIDGEBACK_GROUP_MARGIN
+            else:
+                margin = ROBOT_TABLE_MARGIN if {a_name, b_name} == {"packing_table", "robot"} else OBB_PLACEMENT_MARGIN
             overlaps = obb_overlap(a_box, b_box, margin=margin)
             print(
                 f"[PLACEMENT_DEBUG] env={env_id} overlap_check "
@@ -917,9 +1037,18 @@ def _validate_table_group(
 
     for i, (a_name, a_box) in enumerate(table_obbs):
         for b_name, b_box in table_obbs[i + 1:]:
+            if a_name.startswith(_RIDGEBACK_GEOMETRY_PREFIX) and b_name.startswith(
+                _RIDGEBACK_GEOMETRY_PREFIX
+            ):
+                continue
             if {a_name, b_name} == {"packing_table", "robot"}:
                 continue
-            margin = ROBOT_TABLE_MARGIN if {a_name, b_name} == {"packing_table", "robot"} else OBB_PLACEMENT_MARGIN
+            if a_name.startswith(_RIDGEBACK_GEOMETRY_PREFIX) or b_name.startswith(
+                _RIDGEBACK_GEOMETRY_PREFIX
+            ):
+                margin = RIDGEBACK_GROUP_MARGIN
+            else:
+                margin = ROBOT_TABLE_MARGIN if {a_name, b_name} == {"packing_table", "robot"} else OBB_PLACEMENT_MARGIN
             if obb_overlap(a_box, b_box, margin=margin):
                 issues.append(
                     f"{a_name} overlaps {b_name} "
@@ -938,13 +1067,14 @@ def _place_table_group(
     desk_positions: torch.Tensor,
     desk_yaws: torch.Tensor,
     spawn_boundaries: List[List[tuple[str, OBB]]],
-) -> list[list[tuple[str, OBB]]]:
+    rng: random.Random,
+) -> tuple[list[list[tuple[str, OBB]]], list[str]]:
     M = len(env_ids)
     device = env.device
-    rng = random.Random()
     env_origins = env.scene.env_origins
     group_placed_mask = torch.zeros(M, dtype=torch.bool, device=device)
     final_table_obbs: list[list[tuple[str, OBB]]] = [[] for _ in range(M)]
+    selected_layout_names = ["none" for _ in range(M)]
 
     for env_idx in range(M):
         success = False
@@ -1002,6 +1132,7 @@ def _place_table_group(
                 )
 
         if success:
+            selected_layout_names[env_idx] = selected_layout_name
             final_table_obbs[env_idx] = selected_obbs
             all_placed[env_idx].extend([box for _, box in selected_obbs])
             all_placed_names[env_idx].extend([name for name, _ in selected_obbs])
@@ -1070,12 +1201,221 @@ def _place_table_group(
     robot_asset.set_joint_position_target(robot_asset.data.default_joint_pos[env_ids], env_ids=env_ids)
     robot_asset.set_joint_velocity_target(robot_asset.data.default_joint_vel[env_ids], env_ids=env_ids)
 
-    return final_table_obbs
+    # The articulation root is the randomized waiting pose.  Its -90-degree
+    # yaw offset keeps the existing planar joint convention aligned with the
+    # G1-local right/forward axes for every room orientation.
+    if "ridgeback" in env.scene.keys():
+        ridgeback = env.scene["ridgeback"]
+        waiting_pos = offset_from_yaw_batched(
+            robot_pos,
+            robot_yaw,
+            RIDGEBACK_WAITING_ROBOT_LOCAL[0],
+            RIDGEBACK_WAITING_ROBOT_LOCAL[1],
+            (ridgeback.data.default_root_state[0, 2] - env_origins[0, 2]).item(),
+        )
+        ridgeback_root_yaw = robot_yaw + RIDGEBACK_ROOT_YAW_OFFSET
+        ridgeback_state = build_root_state(
+            waiting_pos,
+            ridgeback_root_yaw,
+            env_origins,
+            env_ids,
+            ridgeback.data.default_root_state,
+        )
+        ridgeback.write_root_state_to_sim(ridgeback_state, env_ids=env_ids)
+
+    return final_table_obbs, selected_layout_names
 
 
 # ======================================================================
 # Phase 3: Tabletop objects — OBB collision on desk surface
 # ======================================================================
+
+
+def _obb_inside_tabletop(candidate: OBB) -> bool:
+    return all(
+        DESK_LOCAL_X_MIN <= x <= DESK_LOCAL_X_MAX
+        and DESK_LOCAL_Y_MIN <= y <= DESK_LOCAL_Y_MAX
+        for x, y in obb_corners(*candidate)
+    )
+
+
+def _asset_room_z(env: ManagerBasedEnv, name: str, env_id: int) -> float:
+    asset = env.scene[name]
+    return float(asset.data.default_root_state[env_id, 2] - env.scene.env_origins[env_id, 2])
+
+
+def _ridgeback_joint_targets() -> dict[str, tuple[float, float, float]]:
+    targets: dict[str, tuple[float, float, float]] = {"waiting": (0.0, 0.0, 0.0)}
+    for side_name, side_sign in (("left", 1.0), ("right", -1.0)):
+        targets[f"staging_{side_name}"] = (
+            -side_sign * RIDGEBACK_STAGING_ROBOT_LOCAL[1],
+            RIDGEBACK_STAGING_ROBOT_LOCAL[0] - RIDGEBACK_WAITING_ROBOT_LOCAL[0],
+            RIDGEBACK_PLANAR_YAW,
+        )
+        targets[f"delivery_{side_name}"] = (
+            -side_sign * RIDGEBACK_DELIVERY_ROBOT_LOCAL[1],
+            RIDGEBACK_DELIVERY_ROBOT_LOCAL[0] - RIDGEBACK_WAITING_ROBOT_LOCAL[0],
+            RIDGEBACK_PLANAR_YAW,
+        )
+    return targets
+
+
+def _store_layout_state(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    desk_positions: torch.Tensor,
+    desk_yaws: torch.Tensor,
+    selected_layout_names: list[str],
+    tabletop_placements: list[dict[str, TabletopPlacement]],
+) -> None:
+    states = getattr(env, "_room_layout_state", {})
+    origins = env.scene.env_origins
+    robot = env.scene["robot"]
+    robot_room_z = float(robot.data.default_root_state[0, 2] - origins[0, 2])
+    ridgeback_room_z = FLOOR_Z
+    if "ridgeback" in env.scene.keys():
+        ridgeback = env.scene["ridgeback"]
+        ridgeback_room_z = float(ridgeback.data.default_root_state[0, 2] - origins[0, 2])
+
+    for env_idx in range(len(env_ids)):
+        env_id = _env_id_int(env_ids, env_idx)
+        origin = origins[env_id]
+        table_x = float(desk_positions[env_idx, 0] + origin[0])
+        table_y = float(desk_positions[env_idx, 1] + origin[1])
+        table_z = float(desk_positions[env_idx, 2] + origin[2])
+        table_yaw = float(desk_yaws[env_idx])
+        robot_x, robot_y = offset_from_yaw(
+            table_x,
+            table_y,
+            table_yaw,
+            ROBOT_ORBIT_OFFSET[0],
+            ROBOT_ORBIT_OFFSET[1],
+        )
+        robot_yaw = table_yaw + math.pi / 2
+        waiting_x, waiting_y = _ridgeback_world_xy(
+            robot_x, robot_y, robot_yaw, RIDGEBACK_WAITING_ROBOT_LOCAL
+        )
+        target = tabletop_placements[env_idx].get("object")
+        target_local_pose = (
+            target.local_pose if target is not None else (math.nan, math.nan, math.nan, math.nan)
+        )
+        states[env_id] = RoomLayoutState(
+            env_id=env_id,
+            robot_pose=Pose2D(
+                position=(robot_x, robot_y, robot_room_z + float(origin[2])),
+                yaw=robot_yaw,
+            ),
+            packing_table_pose=Pose2D(position=(table_x, table_y, table_z), yaw=table_yaw),
+            target_object_local_pose=target_local_pose,
+            ridgeback_waiting_pose=Pose2D(
+                position=(waiting_x, waiting_y, ridgeback_room_z + float(origin[2])),
+                yaw=robot_yaw,
+            ),
+            selected_wall_facing_layout=selected_layout_names[env_idx],
+            tabletop_placements=dict(tabletop_placements[env_idx]),
+            ridgeback_joint_targets=_ridgeback_joint_targets(),
+        )
+    env._room_layout_state = states
+
+
+def reset_target_on_current_table(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor | None,
+    asset_name: str = "object",
+) -> None:
+    """Respawn a dynamic target collision-free on its current randomized table."""
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    states = getattr(env, "_room_layout_state", None)
+    if not states:
+        raise RuntimeError("room layout state is unavailable; run the full randomized reset first")
+    if asset_name not in TABLE_PROP_META:
+        raise KeyError(f"no tabletop metadata registered for {asset_name!r}")
+
+    rng = _room_rng(env)
+    meta = TABLE_PROP_META[asset_name]
+    if not meta.dynamic:
+        raise ValueError(f"tabletop respawn requires a dynamic object, got {asset_name!r}")
+    asset = env.scene[asset_name]
+    env_origins = env.scene.env_origins
+
+    for env_id_tensor in env_ids:
+        env_id = int(env_id_tensor.item())
+        layout = states.get(env_id)
+        if layout is None:
+            raise RuntimeError(f"room layout state is unavailable for env {env_id}")
+        occupied = [
+            make_obb(
+                placement.local_pose[0],
+                placement.local_pose[1],
+                placement.bbox,
+                placement.local_pose[3],
+            )
+            for name, placement in layout.tabletop_placements.items()
+            if name != asset_name
+        ]
+        occupied.extend(
+            make_obb(area.center[0], area.center[1], area.bbox, area.yaw)
+            for area in TABLE_RESERVED_AREAS
+        )
+
+        selected: tuple[float, float, float] | None = None
+        for _ in range(300):
+            lx = rng.uniform(DESK_LOCAL_X_MIN, DESK_LOCAL_X_MAX)
+            ly = rng.uniform(DESK_LOCAL_Y_MIN, DESK_LOCAL_Y_MAX)
+            local_yaw = rng.uniform(0.0, 2.0 * math.pi)
+            candidate = make_obb(lx, ly, meta.bbox, local_yaw)
+            if not _obb_inside_tabletop(candidate):
+                continue
+            if obb_overlap_any(candidate, occupied, margin=DESK_OBJECT_MARGIN):
+                continue
+            selected = (lx, ly, local_yaw)
+            break
+        if selected is None:
+            raise RuntimeError(f"no collision-free tabletop respawn pose for {asset_name!r} in env {env_id}")
+
+        previous = layout.tabletop_placements.get(asset_name)
+        local_z = (
+            previous.local_pose[2]
+            if previous is not None
+            else _asset_room_z(env, asset_name, env_id)
+            - (layout.packing_table_pose.position[2] - float(env_origins[env_id, 2]))
+        )
+        lx, ly, local_yaw = selected
+        world_x, world_y = offset_from_yaw(
+            layout.packing_table_pose.position[0],
+            layout.packing_table_pose.position[1],
+            layout.packing_table_pose.yaw,
+            lx,
+            ly,
+        )
+        world_z = layout.packing_table_pose.position[2] + local_z
+        room_pos = torch.tensor(
+            [[
+                world_x - float(env_origins[env_id, 0]),
+                world_y - float(env_origins[env_id, 1]),
+                world_z - float(env_origins[env_id, 2]),
+            ]],
+            device=env.device,
+        )
+        world_yaw = torch.tensor(
+            [layout.packing_table_pose.yaw + local_yaw], device=env.device
+        )
+        eid = env_ids.new_tensor([env_id])
+        root_state = build_root_state(
+            room_pos, world_yaw, env_origins, eid, asset.data.default_root_state
+        )
+        root_state[:, 7:13] = 0.0
+        asset.write_root_state_to_sim(root_state, env_ids=eid)
+
+        placement = TabletopPlacement(
+            name=asset_name,
+            local_pose=(lx, ly, local_z, local_yaw),
+            bbox=meta.bbox,
+        )
+        layout.tabletop_placements[asset_name] = placement
+        if asset_name == "object":
+            layout.target_object_local_pose = placement.local_pose
 
 def _place_desk_objects(
     env: ManagerBasedEnv,
@@ -1084,18 +1424,18 @@ def _place_desk_objects(
     desk_pos: torch.Tensor,
     desk_yaw_rad: torch.Tensor,
     spawn_boundaries: List[List[tuple[str, OBB]]],
-    min_table_objects: int = 1,
-) -> list[list[tuple[str, OBB]]]:
+    min_table_objects: int = 0,
+    rng: random.Random | None = None,
+) -> tuple[list[list[tuple[str, OBB]]], list[dict[str, TabletopPlacement]]]:
     M = len(env_ids)
     debug_obbs: list[list[tuple[str, OBB]]] = [[] for _ in range(M)]
+    placement_records: list[dict[str, TabletopPlacement]] = [{} for _ in range(M)]
     if not table_prop_names:
-        return debug_obbs
+        return debug_obbs, placement_records
 
     device = env.device
     env_origins = env.scene.env_origins
-    rng = random.Random()
-
-    num_total = len(table_prop_names)
+    rng = rng or _room_rng(env)
 
     for env_idx in range(M):
         if desk_pos[env_idx, 2].item() <= DESPAWN_Z * 0.5:
@@ -1129,21 +1469,58 @@ def _place_desk_objects(
                 (area.name, make_obb(wx, wy, area.bbox, desk_yaw_rad[env_idx].item() + area.yaw))
             )
 
-        # Keep the target object at the same local table position as the regular task.
+        # The target is mandatory, but its pose is sampled on the current table
+        # just like every other movable tabletop object.
         if "object" in table_prop_names and "object" in env.scene.keys():
             asset = env.scene["object"]
             meta = TABLE_PROP_META["object"]
-            wx, wy = offset_from_yaw(
-                desk_pos[env_idx, 0].item(),
-                desk_pos[env_idx, 1].item(),
-                desk_yaw_rad[env_idx].item(),
-                OBJECT_TABLE_LOCAL_OFFSET[0],
-                OBJECT_TABLE_LOCAL_OFFSET[1],
-            )
-            world_yaw = desk_yaw_rad[env_idx].item()
-            world_box = make_obb(wx, wy, meta.bbox, world_yaw)
-            spawn_issue = _outside_spawn_region_issue("object", world_box, spawn_boundaries[env_idx])
-            if spawn_issue is not None:
+            placed = False
+            last_reject_reason = "no_valid_candidate"
+            for _ in range(100):
+                lx = rng.uniform(DESK_LOCAL_X_MIN, DESK_LOCAL_X_MAX)
+                ly = rng.uniform(DESK_LOCAL_Y_MIN, DESK_LOCAL_Y_MAX)
+                obj_yaw = rng.uniform(0.0, 2.0 * math.pi)
+                candidate = make_obb(lx, ly, meta.bbox, obj_yaw)
+                if not _obb_inside_tabletop(candidate):
+                    last_reject_reason = "object outside_tabletop"
+                    continue
+                if obb_overlap_any(candidate, desk_placed, margin=DESK_OBJECT_MARGIN):
+                    last_reject_reason = "object overlaps_tabletop_object"
+                    continue
+                wx, wy = offset_from_yaw(
+                    desk_pos[env_idx, 0].item(),
+                    desk_pos[env_idx, 1].item(),
+                    desk_yaw_rad[env_idx].item(),
+                    lx,
+                    ly,
+                )
+                world_yaw = desk_yaw_rad[env_idx].item() + obj_yaw
+                world_box = make_obb(wx, wy, meta.bbox, world_yaw)
+                spawn_issue = _outside_spawn_region_issue("object", world_box, spawn_boundaries[env_idx])
+                if spawn_issue is not None:
+                    last_reject_reason = spawn_issue
+                    continue
+                object_z = _asset_room_z(env, "object", _env_id_int(env_ids, env_idx))
+                pos = torch.tensor([wx, wy, object_z], device=device).unsqueeze(0)
+                yaw = torch.tensor([world_yaw], device=device)
+                eid = env_ids[env_idx:env_idx+1]
+                root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
+                asset.write_root_state_to_sim(root_state, env_ids=eid)
+                desk_placed.append(candidate)
+                debug_obbs[env_idx].append(("object", world_box))
+                placement_records[env_idx]["object"] = TabletopPlacement(
+                    name="object",
+                    local_pose=(
+                        lx,
+                        ly,
+                        object_z - desk_pos[env_idx, 2].item(),
+                        obj_yaw,
+                    ),
+                    bbox=meta.bbox,
+                )
+                placed = True
+                break
+            if not placed:
                 pos = torch.tensor([0.0, 0.0, DESPAWN_Z], device=device).unsqueeze(0)
                 yaw = torch.tensor([0.0], device=device)
                 eid = env_ids[env_idx:env_idx+1]
@@ -1152,25 +1529,24 @@ def _place_desk_objects(
                 print(
                     f"[PLACEMENT_ERROR] env={_env_id_int(env_ids, env_idx)} "
                     f"object=object tabletop_placement_failed despawning=true "
-                    f"last_reject_reason={spawn_issue}",
+                    f"last_reject_reason={last_reject_reason}",
                     flush=True,
                 )
-            else:
-                pos = torch.tensor([wx, wy, DESK_OBJECT_Z], device=device).unsqueeze(0)
-                yaw = torch.tensor([world_yaw], device=device)
-                eid = env_ids[env_idx:env_idx+1]
-                root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
-                asset.write_root_state_to_sim(root_state, env_ids=eid)
-                desk_placed.append(make_obb(OBJECT_TABLE_LOCAL_OFFSET[0], OBJECT_TABLE_LOCAL_OFFSET[1], meta.bbox, 0.0))
-                debug_obbs[env_idx].append(("object", world_box))
 
         extra_names = [name for name in table_prop_names if name != "object"]
         if not extra_names:
             continue
 
         # How many extra tabletop props in this env.
+        if not 0 <= min_table_objects <= len(extra_names):
+            raise ValueError(
+                f"min_table_objects must be within [0, {len(extra_names)}], got {min_table_objects}"
+            )
         count = rng.randint(min_table_objects, len(extra_names))
         visible_extra_names = set(extra_names[:count])
+        visible_extra_names.update(
+            name for name in extra_names if TABLE_PROP_META[name].mandatory
+        )
 
         if "desk_lamp" in visible_extra_names and "desk_lamp" in env.scene.keys():
             asset = env.scene["desk_lamp"]
@@ -1183,6 +1559,9 @@ def _place_desk_objects(
                 obj_yaw = DESK_LAMP_LOCAL_YAW
 
                 candidate = make_obb(lx, ly, meta.bbox, obj_yaw)
+                if not _obb_inside_tabletop(candidate):
+                    last_reject_reason = "desk_lamp outside_tabletop"
+                    continue
                 if obb_overlap_any(candidate, desk_placed, margin=DESK_OBJECT_MARGIN):
                     last_reject_reason = "desk_lamp overlaps_tabletop_object"
                     continue
@@ -1202,7 +1581,8 @@ def _place_desk_objects(
 
                 desk_placed.append(candidate)
 
-                pos = torch.tensor([wx, wy, DESK_LAMP_Z], device=device).unsqueeze(0)
+                object_z = _asset_room_z(env, "desk_lamp", _env_id_int(env_ids, env_idx))
+                pos = torch.tensor([wx, wy, object_z], device=device).unsqueeze(0)
                 yaw = torch.tensor([world_yaw], device=device)
                 eid = env_ids[env_idx:env_idx+1]
 
@@ -1210,6 +1590,16 @@ def _place_desk_objects(
                 _write_tabletop_root_state(asset, "desk_lamp", root_state, eid)
                 debug_obbs[env_idx].append(
                     ("desk_lamp", world_box)
+                )
+                placement_records[env_idx]["desk_lamp"] = TabletopPlacement(
+                    name="desk_lamp",
+                    local_pose=(
+                        lx,
+                        ly,
+                        object_z - desk_pos[env_idx, 2].item(),
+                        obj_yaw,
+                    ),
+                    bbox=meta.bbox,
                 )
                 placed = True
                 break
@@ -1254,6 +1644,9 @@ def _place_desk_objects(
                     obj_yaw = rng.uniform(0, 2 * math.pi)
 
                     candidate = make_obb(lx, ly, meta.bbox, obj_yaw)
+                    if not _obb_inside_tabletop(candidate):
+                        last_reject_reason = f"{name} outside_tabletop"
+                        continue
                     if obb_overlap_any(candidate, desk_placed, margin=DESK_OBJECT_MARGIN):
                         last_reject_reason = f"{name} overlaps_tabletop_object"
                         continue
@@ -1273,7 +1666,8 @@ def _place_desk_objects(
 
                     desk_placed.append(candidate)
 
-                    pos = torch.tensor([wx, wy, DESK_OBJECT_Z], device=device).unsqueeze(0)
+                    object_z = _asset_room_z(env, name, _env_id_int(env_ids, env_idx))
+                    pos = torch.tensor([wx, wy, object_z], device=device).unsqueeze(0)
                     yaw = torch.tensor([world_yaw], device=device)
                     eid = env_ids[env_idx:env_idx+1]
 
@@ -1281,6 +1675,16 @@ def _place_desk_objects(
                     _write_tabletop_root_state(asset, name, root_state, eid)
                     debug_obbs[env_idx].append(
                         (name, world_box)
+                    )
+                    placement_records[env_idx][name] = TabletopPlacement(
+                        name=name,
+                        local_pose=(
+                            lx,
+                            ly,
+                            object_z - desk_pos[env_idx, 2].item(),
+                            obj_yaw,
+                        ),
+                        bbox=meta.bbox,
                     )
                     placed = True
                     break
@@ -1304,4 +1708,4 @@ def _place_desk_objects(
                 root_state = build_root_state(pos, yaw, env_origins, eid, asset.data.default_root_state)
                 _write_tabletop_root_state(asset, name, root_state, eid)
 
-    return debug_obbs
+    return debug_obbs, placement_records

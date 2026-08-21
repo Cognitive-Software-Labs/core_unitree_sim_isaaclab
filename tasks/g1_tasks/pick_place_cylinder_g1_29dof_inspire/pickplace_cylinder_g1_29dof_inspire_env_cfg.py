@@ -117,7 +117,7 @@ class EventCfg:
         params={
             "wall_prop_names": WALL_PROP_NAMES,
             "table_prop_names": TABLE_PROP_NAMES,
-            "min_table_objects": 1,
+            "min_table_objects": len(TABLE_PROP_NAMES),
         },
     )
 

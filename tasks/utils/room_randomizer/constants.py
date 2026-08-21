@@ -268,13 +268,13 @@ ROBOT_FACING_YAW_JITTER_RAD = 0.0
 # ============================================================
 
 # Surface bounds relative to packing table center
-DESK_LOCAL_X_MIN = -0.55
-DESK_LOCAL_X_MAX = 0.55
+DESK_LOCAL_X_MIN = -0.85
+DESK_LOCAL_X_MAX = 0.18
 DESK_LOCAL_Y_MIN = -0.28
 DESK_LOCAL_Y_MAX = 0.28
 DESK_OBJECT_MARGIN = 0.03   # margin between tabletop OBBs
-DESK_LAMP_LOCAL_X_RANGE = (-0.55, -0.42)
-DESK_LAMP_LOCAL_Y_RANGE = (0.16, 0.26)
+DESK_LAMP_LOCAL_X_RANGE = (-0.60, -0.35)
+DESK_LAMP_LOCAL_Y_RANGE = (0.10, 0.14)
 DESK_LAMP_LOCAL_YAW = 0.0
 DESK_LAMP_Z = 0.82
 TABLETOP_CUBE_PROP_NAMES = {"blue_cube", "yellow_cube"}
@@ -286,6 +286,22 @@ TABLETOP_CUBE_LOCAL_X_MAX = 0.18
 # object=(-0.35, 0.40) when the table yaw is zero.
 ROBOT_ORBIT_OFFSET = (-0.15, -0.55)
 OBJECT_TABLE_LOCAL_OFFSET = (-0.35, -0.15)
+
+# Ridgeback poses are expressed in the randomized G1 frame: local X points
+# forward and local Y points left.  The Ridgeback articulation root is rotated
+# by -90 degrees from G1 so its planar X/Y joints retain their existing
+# lateral/forward meaning for every randomized robot yaw.
+RIDGEBACK_WAITING_ROBOT_LOCAL = (-1.70, 0.0)
+RIDGEBACK_STAGING_ROBOT_LOCAL = (-1.10, 0.75)
+RIDGEBACK_DELIVERY_ROBOT_LOCAL = (-0.70, 0.78)
+RIDGEBACK_ROOT_YAW_OFFSET = -math.pi / 2
+RIDGEBACK_PLANAR_YAW = math.pi / 2
+
+# Clearpath Ridgeback is approximately 0.96 x 0.79 m.  The footprint includes
+# a small allowance for the collision basket mounted to the chassis.
+RIDGEBACK_BBOX = BBox(half_w=0.50, half_d=0.42)
+RIDGEBACK_CORRIDOR_HALF_WIDTH = RIDGEBACK_BBOX.half_d
+RIDGEBACK_GROUP_MARGIN = 0.0
 
 # Despawn height
 DESPAWN_Z = -100.0
@@ -377,6 +393,8 @@ ROBOT_TABLE_MARGIN = 0.0
 class TablePropMeta:
     """Placement metadata for a tabletop object."""
     bbox: BBox
+    dynamic: bool = False
+    mandatory: bool = False
 
 
 @dataclass(frozen=True)
@@ -404,9 +422,20 @@ TABLE_PROP_META: Dict[str, TablePropMeta] = {
     "coffee_cup":   TablePropMeta(bbox=BBox(half_w=0.043, half_d=0.043)),
     "desk_lamp":    TablePropMeta(bbox=BBox(half_w=0.241, half_d=0.134)),
     "box_portable": TablePropMeta(bbox=BBox(half_w=0.195, half_d=0.145)),
-    "blue_cube":    TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05)),
-    "yellow_cube":  TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05)),
-    "object":       TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05)),
+    "blue_cube":    TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05), dynamic=True, mandatory=True),
+    "yellow_cube":  TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05), dynamic=True, mandatory=True),
+    # Measured authored XY extents for Shidan's hospital props.  All four are
+    # required in the teleoperation scene; none is randomly omitted.
+    "object":       TablePropMeta(bbox=BBox(half_w=0.040, half_d=0.040), dynamic=True, mandatory=True),
+    "hand_sanitizer": TablePropMeta(
+        bbox=BBox(half_w=0.045, half_d=0.035), dynamic=True, mandatory=True
+    ),
+    "gauze_box": TablePropMeta(
+        bbox=BBox(half_w=0.085, half_d=0.055), dynamic=True, mandatory=True
+    ),
+    "specimen_cup": TablePropMeta(
+        bbox=BBox(half_w=0.040, half_d=0.040), dynamic=True, mandatory=True
+    ),
 }
 
 # ============================================================
