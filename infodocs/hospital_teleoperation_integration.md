@@ -69,5 +69,9 @@ python sim_main.py \
 - Target branch: `Cognitive-Software-Labs/core_unitree_sim_isaaclab:hospital_env`
 - Personal backup branch:
   `ShidanChen/unitree_sim_isaaclab:integration/hospital-env-20260821`
+- Companion XR client branch:
+  `ShidanChen/xr_teleoperate:integration/hospital-env-teleoperation-20260821`
+  (Quest button mapping, motion-stick commands, reset publishing, and
+  fixed-base waist-yaw control).
 - Future updates should fetch and merge the latest `hospital_env` before
   pushing, because multiple contributors are working on the same branch.
