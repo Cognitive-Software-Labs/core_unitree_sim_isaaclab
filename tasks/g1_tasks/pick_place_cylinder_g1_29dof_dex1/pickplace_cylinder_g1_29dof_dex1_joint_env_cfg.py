@@ -35,7 +35,10 @@ from tasks.utils.room_randomizer.pickplace_config import (
     WALL_PROP_NAMES,
     register_randomized_room_reset_events,
 )
-from tasks.common_scene.base_scene_pickplace_cylindercfg import TableCylinderSceneCfg, project_root
+from tasks.common_scene.base_scene_pickplace_cylindercfg import (
+    hospital_medicine_bottle_cfg,
+    project_root,
+)
 
 
 RIDGEBACK_USD = (
@@ -358,7 +361,7 @@ class ObjectTableSceneCfg(RandomizedRoomPickPlaceSceneCfg):
     robot: ArticulationCfg = G1RobotPresets.g1_29dof_dex1_base_fix()
     # Preserve Shidan's medicine-bottle physics and mass configuration while
     # the shared randomizer owns its table-local pose.
-    object: RigidObjectCfg = TableCylinderSceneCfg.object.copy()
+    object: RigidObjectCfg = hospital_medicine_bottle_cfg()
     # The stock fixed-base asset hard-locks every waist joint with zero velocity
     # and kp/kd=10000.  Release yaw for VR torso turning while keeping waist
     # roll/pitch and the complete lower body fixed.
