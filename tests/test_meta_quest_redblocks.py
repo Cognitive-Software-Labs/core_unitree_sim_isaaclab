@@ -12,6 +12,7 @@ from tools.meta_quest import (
     MetaQuestConfigurationError,
     configure_meta_quest,
 )
+from tools.teleimager_compat import configure_camera_transports
 
 
 def _args(task: str, **overrides):
@@ -110,6 +111,20 @@ class MetaQuestRedBlockTests(unittest.TestCase):
         self.assertIsNone(configure_meta_quest(args, environ))
         self.assertEqual(vars(args), before[0])
         self.assertEqual(environ, before[1])
+
+    def test_pinned_teleimager_config_disables_direct_webrtc(self):
+        config = {
+            "head_camera": {"enable_zmq": True, "enable_webrtc": True},
+            "left_wrist_camera": {"enable_zmq": True, "enable_webrtc": True},
+            "right_wrist_camera": {"enable_zmq": True, "enable_webrtc": True},
+        }
+
+        configured = configure_camera_transports(
+            config, {"TELEIMAGER_DISABLE_WEBRTC": "1"}
+        )
+
+        self.assertTrue(all(camera["enable_zmq"] for camera in configured.values()))
+        self.assertTrue(all(not camera["enable_webrtc"] for camera in configured.values()))
 
 
 if __name__ == "__main__":

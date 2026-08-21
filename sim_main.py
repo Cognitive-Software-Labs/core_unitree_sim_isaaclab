@@ -22,7 +22,7 @@ from tools.meta_quest import MetaQuestConfigurationError, configure_meta_quest
 # Isaac Lab AppLauncher
 from isaaclab.app import AppLauncher
 
-from teleimager.image_server import run_isaacsim_server
+from tools.teleimager_compat import run_isaacsim_server
 from dds.dds_create import create_dds_objects,create_dds_objects_replay
 # add command line arguments
 parser = argparse.ArgumentParser(description="Unitree Simulation")
