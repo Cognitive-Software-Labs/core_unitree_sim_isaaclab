@@ -10,6 +10,7 @@ from .placement_utils import obb_corners
 
 _CATEGORY_COLORS = {
     "wall": [0.10, 0.55, 1.00, 1.00],
+    "static_wall": [1.00, 0.10, 0.10, 1.00],
     "table_group": [0.10, 1.00, 0.20, 1.00],
     "robot": [0.75, 0.20, 1.00, 1.00],
     "table_reserved": [1.00, 1.00, 1.00, 1.00],

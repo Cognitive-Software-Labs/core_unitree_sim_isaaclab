@@ -102,20 +102,6 @@ def _kinematic_usd_cfg(usd_path: str) -> sim_utils.UsdFileCfg:
     )
 
 
-def _dynamic_usd_cfg(usd_path: str, mass: float = 0.05) -> sim_utils.UsdFileCfg:
-    """UsdFileCfg with dynamic rigid-body properties (affected by physics)."""
-    return sim_utils.UsdFileCfg(
-        func=_spawn_real_rigid_usd,
-        usd_path=usd_path,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            rigid_body_enabled=True,
-            kinematic_enabled=False,
-        ),
-        mass_props=sim_utils.MassPropertiesCfg(mass=mass),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-    )
-
-
 # ------------------------------------------------------------------
 # Scene configuration
 # ------------------------------------------------------------------

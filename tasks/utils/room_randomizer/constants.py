@@ -14,7 +14,12 @@ from typing import Dict, List, Tuple
 # ============================================================
 
 PROJECT_ROOT = os.environ.get("PROJECT_ROOT", os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-ROOM_SHELL_USD = os.path.join(PROJECT_ROOT, "isaac-projects", "new_base_room.usda")
+ROOM_SHELL_USD = os.path.expanduser(
+    os.environ.get(
+        "ROOM_RANDOMIZER_ROOM_SHELL_USD",
+        os.path.join(PROJECT_ROOT, "isaac-projects", "new_base_room.usda"),
+    )
+)
 
 # ============================================================
 # Room geometry
@@ -34,7 +39,12 @@ DESK_OBJECT_Z = 0.84   # object height on desk
 # Wall surface positions (room-facing edge of each wall).
 BACK_WALL_LINE_Y = -10.95
 FRONT_WALL_LINE_Y = -5.47
-RIGHT_WALL_LINE_X = -2.5
+# Composed bounds of Geo_M3_SideWall_40/41 in new_base_room.usda are
+# x=[-2.570861, -2.468369]. The room interior is on the low-X side.
+RIGHT_WALL_CENTER_X = -2.519615
+RIGHT_WALL_HALF_THICKNESS = 0.051246
+RIGHT_WALL_LINE_X = RIGHT_WALL_CENTER_X - RIGHT_WALL_HALF_THICKNESS
+RIGHT_WALL_CONTACT_CLEARANCE = 0.005
 
 # ============================================================
 # Bounding box primitives
@@ -53,6 +63,15 @@ class BBox:
 @dataclass(frozen=True)
 class StaticRoomObstacle:
     """Static room-shell footprint that the table group must avoid."""
+    name: str
+    center: Tuple[float, float]
+    bbox: BBox
+    yaw: float = 0.0
+
+
+@dataclass(frozen=True)
+class SpawnBoundary:
+    """Half-plane boundary that randomized objects may not spawn beyond."""
     name: str
     center: Tuple[float, float]
     bbox: BBox
@@ -93,9 +112,9 @@ WALL_ZONES: List[WallZone] = [
     ),
 ]
 
-# Static RoomShell wall footprints used by the OBB planner. These represent
-# authored USD wall geometry that PhysX collides with but the randomizer would
-# otherwise not know about.
+# Conservative fallback RoomShell wall footprints used when USD stage bounds
+# are unavailable. At runtime, the Isaac Lab event prefers the authored wall
+# geometry from the spawned RoomShell so edits to new_base_room.usda are used.
 STATIC_ROOM_OBSTACLES: List[StaticRoomObstacle] = [
     StaticRoomObstacle(
         name="static_front_wall",
@@ -103,9 +122,14 @@ STATIC_ROOM_OBSTACLES: List[StaticRoomObstacle] = [
         bbox=BBox(half_w=5.35, half_d=0.12),
     ),
     StaticRoomObstacle(
+        name="static_front_wall_right_extension",
+        center=(-1.35, FRONT_WALL_LINE_Y),
+        bbox=BBox(half_w=0.85, half_d=0.12),
+    ),
+    StaticRoomObstacle(
         name="static_right_wall",
-        center=(-2.5, -8.15),
-        bbox=BBox(half_w=0.12, half_d=3.15),
+        center=(RIGHT_WALL_CENTER_X, -8.15),
+        bbox=BBox(half_w=RIGHT_WALL_HALF_THICKNESS, half_d=3.15),
     ),
     StaticRoomObstacle(
         name="static_back_wall",
@@ -126,6 +150,34 @@ TABLE_FALLBACK_X = -7.50
 TABLE_FALLBACK_Y = -7.50
 TABLE_GROUP_MAX_TRIES = 300
 
+# No-spawn boundaries use the side containing this seed as the valid side.
+SPAWN_REGION_SEED = (TABLE_FALLBACK_X, TABLE_FALLBACK_Y)
+SPAWN_BOUNDARY_TOLERANCE = 0.08
+
+# Conservative fallback no-spawn boundaries. Runtime stage geometry is preferred.
+FALLBACK_NO_SPAWN_BOUNDARIES: List[SpawnBoundary] = [
+    SpawnBoundary(
+        name="no_spawn_front_wall",
+        center=(-7.5, FRONT_WALL_LINE_Y),
+        bbox=BBox(half_w=5.35, half_d=0.12),
+    ),
+    SpawnBoundary(
+        name="no_spawn_front_wall_right_extension",
+        center=(-1.35, FRONT_WALL_LINE_Y),
+        bbox=BBox(half_w=0.85, half_d=0.12),
+    ),
+    SpawnBoundary(
+        name="no_spawn_new_partition_wall",
+        center=(RIGHT_WALL_LINE_X, -8.15),
+        bbox=BBox(half_w=0.12, half_d=3.15),
+    ),
+    SpawnBoundary(
+        name="no_spawn_back_wall",
+        center=(-8.35, BACK_WALL_LINE_Y),
+        bbox=BBox(half_w=4.35, half_d=0.12),
+    ),
+]
+
 # Stricter usable area for the table group. Unlike ROOM_* these bounds model
 # where the robot/table may operate, including virtual limits on open sides.
 TABLE_GROUP_X_MIN = -12.35
@@ -134,13 +186,13 @@ TABLE_GROUP_Y_MIN = BACK_WALL_LINE_Y + 0.35
 TABLE_GROUP_Y_MAX = FRONT_WALL_LINE_Y - 0.35
 
 # Robot-facing targets are intentionally narrower than the full room bounds.
-# The low-X side is the empty/open wall, so front/back target points stay away
-# from that opening and the open side is never a selectable facing layout.
-OPEN_WALL_NAMES = ("left_open",)
-FRONT_BACK_WALL_TARGET_X_MIN = -10.0
-FRONT_BACK_WALL_TARGET_X_MAX = -5.0
-RIGHT_WALL_TARGET_Y_MIN = -9.0
-RIGHT_WALL_TARGET_Y_MAX = -6.0
+# The open side is never a selectable facing layout; the robot may face the
+# authored back wall or the new partition wall.
+OPEN_WALL_NAMES = ("front_open", "left_open")
+BACK_WALL_TARGET_X_MIN = -10.0
+BACK_WALL_TARGET_X_MAX = -5.0
+NEW_WALL_TARGET_Y_MIN = -9.0
+NEW_WALL_TARGET_Y_MAX = -6.0
 ROBOT_FACING_MAX_YAW_OFFSET_RAD = math.radians(15.0)
 
 
@@ -161,34 +213,24 @@ class RobotFacingLayout:
 
 
 ROBOT_FACING_LAYOUTS: List[RobotFacingLayout] = [
-    # Robot sees the front wall, with the back wall behind it.
-    RobotFacingLayout(
-        name="face_front_wall",
-        wall="front",
-        target_axis="y",
-        fixed_coord=FRONT_WALL_LINE_Y,
-        sample_min=FRONT_BACK_WALL_TARGET_X_MIN,
-        sample_max=FRONT_BACK_WALL_TARGET_X_MAX,
-        yaw_center=math.pi / 2,
-    ),
     # Robot sees the back wall, with the front wall behind it.
     RobotFacingLayout(
         name="face_back_wall",
         wall="back",
         target_axis="y",
         fixed_coord=BACK_WALL_LINE_Y,
-        sample_min=FRONT_BACK_WALL_TARGET_X_MIN,
-        sample_max=FRONT_BACK_WALL_TARGET_X_MAX,
+        sample_min=BACK_WALL_TARGET_X_MIN,
+        sample_max=BACK_WALL_TARGET_X_MAX,
         yaw_center=-math.pi / 2,
     ),
-    # Robot sees the side wall at the high-X edge of the room.
+    # Robot sees the new partition wall at the high-X edge of the valid room.
     RobotFacingLayout(
-        name="face_right_wall",
-        wall="right",
+        name="face_new_wall",
+        wall="new_wall",
         target_axis="x",
         fixed_coord=RIGHT_WALL_LINE_X,
-        sample_min=RIGHT_WALL_TARGET_Y_MIN,
-        sample_max=RIGHT_WALL_TARGET_Y_MAX,
+        sample_min=NEW_WALL_TARGET_Y_MIN,
+        sample_max=NEW_WALL_TARGET_Y_MAX,
         yaw_center=0.0,
     ),
 ]
@@ -263,6 +305,7 @@ class WallPropMeta:
     bbox_center: Tuple[float, float] = (0.0, 0.0)
     tall: bool = False
     wall_offset: float = 0.0  # extra push away from wall surface (metres)
+    wall_offsets: Dict[str, float] | None = None
     yaw_offset: float = 0.0   # yaw adjustment relative to wall base yaw (radians)
     allowed_walls: Tuple[str, ...] = ("back", "right")
 
@@ -272,25 +315,28 @@ WALL_PROP_META: Dict[str, WallPropMeta] = {
         bbox=BBox(half_w=0.436, half_d=0.328),
         bbox_center=(0.415679, 0.303706),
         tall=True,
-        wall_offset=0.25,
+        wall_offset=0,
+        wall_offsets={"back": 0.431706, "right": 0.131706},
         yaw_offset=math.pi,
-        allowed_walls=("right",),
+        allowed_walls=("back", "right"),
     ),
     "shelf_set": WallPropMeta(
         "SM_ShelfSet_01a",
         bbox=BBox(half_w=0.861, half_d=0.280),
         tall=True,
-        wall_offset=-0.220,
+        wall_offset=0,
+        wall_offsets={"back": 0.080, "right": -0.220},
         yaw_offset=math.pi,
-        allowed_walls=("right",),
+        allowed_walls=("back", "right"),
     ),
     "supply_cabinet": WallPropMeta(
         "SM_SupplyCabinet_01c",
         bbox=BBox(half_w=0.367, half_d=0.737),
         tall=True,
         wall_offset=0.167,
+        wall_offsets={"back": 0.167, "right": -0.133},
         yaw_offset=math.pi / 2,
-        allowed_walls=("back",),
+        allowed_walls=("back", "right"),
     ),
     "trash_can": WallPropMeta(
         "SM_TrashCan",

@@ -5,15 +5,15 @@ Hospital-room red-block pick-place task for G1 (29 DoF) + Dex1 gripper, joint co
 
 This is an *independent* task: it does NOT modify any existing warehouse task.
 The scene reuses the hospital RoomShell (new_base_room.usda) from
-RandomizedRoomPickPlaceSceneCfg, but runs a FIXED layout (no randomizer):
+RandomizedRoomPickPlaceSceneCfg. The calibrated task group stays fixed while
+the wall props use the shared room randomizer:
 
   * table / robot / object poses are the known-good warehouse red-block geometry
     translated by T = (-3.2, -3.3, 0) so the table sits in the open hospital
     interior at (-7.5, -7.5). That preserves the robot<->table<->object relative
     poses the IK, cameras and grasp are already calibrated for.
-  * the room's baked-in furniture stays as visual backdrop; the extra spawned
-    RigidObject props from the parent scene are disabled (set to None) to avoid
-    duplicate meshes and a runtime Omniverse-CDN dependency.
+  * wall props are spawned separately and placed from
+    tasks/utils/room_randomizer/constants.py on every full reset.
 
 Tunable numbers that may need a visual pass in Isaac Sim are tagged  # TUNE.
 """
@@ -40,6 +40,11 @@ from . import mdp
 from tasks.common_config import CameraBaseCfg, CameraPresets, G1RobotPresets  # isort: skip
 from tasks.common_event.event_manager import SimpleEvent, SimpleEventManager
 from tasks.common_scene.base_scene_randomized_pickplace_cfg import RandomizedRoomPickPlaceSceneCfg
+from tasks.utils.room_randomizer import randomize_wall_props_layout
+from tasks.utils.room_randomizer.pickplace_config import (
+    WALL_PROP_NAMES,
+    reset_all_then_randomize_wall_props,
+)
 
 project_root = os.environ.get("PROJECT_ROOT")
 
@@ -117,15 +122,8 @@ class HospitalRedBlockSceneCfg(RandomizedRoomPickPlaceSceneCfg):
         rot_offset=(-0.3173, 0.94833, 0.0, 0.0),
     )
 
-    # --- disable the parent's extra spawned props (keep baked-in backdrop) --
-    medical_cabinet = None
-    shelf_set = None
-    supply_cabinet = None
-    supply_cart_a = None
-    supply_cart_b = None
-    trash_can = None
-    plant_a = None
-    plant_b = None
+    # Keep the inherited wall-prop assets enabled. Their reset event reads the
+    # shared WALL_PROP_META constants and hides the baked-in duplicates.
     coffee_cup = None
     desk_lamp = None
     box_portable = None
@@ -190,6 +188,12 @@ class RewardsCfg:
 
 @configclass
 class EventCfg:
+    randomize_wall_props = EventTermCfg(
+        func=randomize_wall_props_layout,
+        mode="reset",
+        params={"wall_prop_names": WALL_PROP_NAMES},
+    )
+
     reset_object = EventTermCfg(
         func=mdp.reset_root_state_uniform,
         mode="reset",
@@ -214,7 +218,7 @@ class PickPlaceRedBlockHospitalG129DEX1EnvCfg(ManagerBasedRLEnvCfg):
     """G1 + Dex1 red-block pick-place inside the fixed hospital room."""
 
     scene: HospitalRedBlockSceneCfg = HospitalRedBlockSceneCfg(
-        num_envs=1, env_spacing=2.5, replicate_physics=True
+        num_envs=1, env_spacing=16.0, replicate_physics=True
     )
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -254,8 +258,5 @@ class PickPlaceRedBlockHospitalG129DEX1EnvCfg(ManagerBasedRLEnvCfg):
             )
         ))
         self.event_manager.register("reset_all_self", SimpleEvent(
-            func=lambda env: base_mdp.reset_scene_to_default(
-                env,
-                torch.arange(env.num_envs, device=env.device),
-            )
+            func=reset_all_then_randomize_wall_props
         ))

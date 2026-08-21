@@ -79,5 +79,6 @@ class RoomEnvCfg(ManagerBasedEnvCfg):
         self.sim.use_fabric = True
 
         # Viewer defaults for debugging.
-        self.viewer.eye = (2.0, 2.0, 2.0)
-        self.viewer.lookat = (-7.0, -7.5, 0.78)
+        self.viewer.origin_type = "world"
+        self.viewer.eye = (-7.5, -3.2, 4.2)
+        self.viewer.lookat = (-7.5, -7.6, 0.8)

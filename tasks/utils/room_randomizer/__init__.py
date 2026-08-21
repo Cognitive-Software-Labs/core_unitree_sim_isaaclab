@@ -1,6 +1,6 @@
 """Room randomizer package for pick and place tasks."""
 
-__all__ = ["randomize_pickplace_room_layout"]
+__all__ = ["randomize_pickplace_room_layout", "randomize_wall_props_layout"]
 
 
 def __getattr__(name: str):
@@ -8,4 +8,8 @@ def __getattr__(name: str):
         from .room_events import randomize_pickplace_room_layout
 
         return randomize_pickplace_room_layout
+    if name == "randomize_wall_props_layout":
+        from .room_events import randomize_wall_props_layout
+
+        return randomize_wall_props_layout
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -9,6 +9,7 @@ ISAACLAB_SH="${ISAACLAB_SH:-/home/vilmos/IsaacLab/isaaclab.sh}"
 
 export CONDA_NO_PLUGINS="${CONDA_NO_PLUGINS:-true}"
 export PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
+export ROOM_RANDOMIZER_ROOM_SHELL_USD="${ROOM_RANDOMIZER_ROOM_SHELL_USD:-$REPO_ROOT/isaac-projects/new_base_room.usda}"
 export CYCLONEDDS_HOME="${CYCLONEDDS_HOME:-/home/vilmos/cyclonedds/install}"
 export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$CYCLONEDDS_HOME}"
 export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib:${LD_LIBRARY_PATH:-}"
@@ -27,6 +28,11 @@ DEVICE="${DEVICE:-cuda:0}"
 TASK="${TASK:-Isaac-PickPlace-Cylinder-G129-Dex1-Joint}"
 ROBOT_TYPE="${ROBOT_TYPE:-g129}"
 HAND_DDS="${HAND_DDS:-dex1}"
+
+if [[ ! -f "$ROOM_RANDOMIZER_ROOM_SHELL_USD" ]]; then
+  echo "Room shell USD not found: $ROOM_RANDOMIZER_ROOM_SHELL_USD" >&2
+  exit 2
+fi
 
 case "$HAND_DDS" in
   dex1)
@@ -48,6 +54,9 @@ cd "$REPO_ROOT"
 "$REPO_ROOT/stop_own_pickplace.sh"
 source "$CONDA_SH"
 conda activate "$CONDA_ENV"
+
+echo "[RUN_PICKPLACE] task=$TASK robot_type=$ROBOT_TYPE hand=$HAND_DDS" >&2
+echo "[RUN_PICKPLACE] room_shell=$ROOM_RANDOMIZER_ROOM_SHELL_USD" >&2
 
 set +u
 exec "$ISAACLAB_SH" -p sim_main.py \

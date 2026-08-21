@@ -260,7 +260,7 @@ class RandomizedRoomPickPlaceSceneCfg(InteractiveSceneCfg):
     # Cameras
     world_camera = CameraBaseCfg.get_camera_config(
         prim_path="/World/PerspectiveCamera",
-        pos_offset=(-0.1, 3.6, 1.6),
-        rot_offset=(-0.00617, 0.00617, 0.70708, -0.70708),
-        focal_length=16.5
+        pos_offset=(-7.3, -8.2, 1.8),
+        rot_offset=(-0.3173, 0.94833, 0.0, 0.0),
+        focal_length=16.5,
     )

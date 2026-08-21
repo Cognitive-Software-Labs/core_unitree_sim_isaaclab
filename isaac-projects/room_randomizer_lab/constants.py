@@ -26,7 +26,13 @@ ROBOT_Z = 0.0328
 
 # Wall surface positions (room-facing edge of each wall).
 BACK_WALL_LINE_Y = -10.95
-RIGHT_WALL_LINE_X = -2.5
+FRONT_WALL_LINE_Y = -5.47
+# Composed bounds of Geo_M3_SideWall_40/41 in new_base_room.usda are
+# x=[-2.570861, -2.468369]. The room interior is on the low-X side.
+RIGHT_WALL_CENTER_X = -2.519615
+RIGHT_WALL_HALF_THICKNESS = 0.051246
+RIGHT_WALL_LINE_X = RIGHT_WALL_CENTER_X - RIGHT_WALL_HALF_THICKNESS
+RIGHT_WALL_CONTACT_CLEARANCE = 0.005
 
 # ============================================================
 # Bounding box primitives
@@ -42,6 +48,24 @@ class BBox:
     """
     half_w: float
     half_d: float
+
+
+@dataclass(frozen=True)
+class StaticRoomObstacle:
+    """Static room-shell footprint that the table group must avoid."""
+    name: str
+    center: Tuple[float, float]
+    bbox: BBox
+    yaw: float = 0.0
+
+
+@dataclass(frozen=True)
+class SpawnBoundary:
+    """Half-plane boundary that randomized objects may not spawn beyond."""
+    name: str
+    center: Tuple[float, float]
+    bbox: BBox
+    yaw: float = 0.0
 
 
 # ============================================================
@@ -82,6 +106,32 @@ WALL_ZONES: List[WallZone] = [
     ),
 ]
 
+# Conservative fallback RoomShell wall footprints used when USD stage bounds
+# are unavailable. At runtime, the randomizer prefers the authored wall
+# geometry from the spawned RoomShell so edits to new_base_room.usda are used.
+STATIC_ROOM_OBSTACLES: List[StaticRoomObstacle] = [
+    StaticRoomObstacle(
+        name="static_front_wall",
+        center=(-7.5, FRONT_WALL_LINE_Y),
+        bbox=BBox(half_w=5.35, half_d=0.12),
+    ),
+    StaticRoomObstacle(
+        name="static_front_wall_right_extension",
+        center=(-1.35, FRONT_WALL_LINE_Y),
+        bbox=BBox(half_w=0.85, half_d=0.12),
+    ),
+    StaticRoomObstacle(
+        name="static_right_wall",
+        center=(RIGHT_WALL_CENTER_X, -8.15),
+        bbox=BBox(half_w=RIGHT_WALL_HALF_THICKNESS, half_d=3.15),
+    ),
+    StaticRoomObstacle(
+        name="static_back_wall",
+        center=(-8.35, BACK_WALL_LINE_Y),
+        bbox=BBox(half_w=4.35, half_d=0.12),
+    ),
+]
+
 # ============================================================
 # Room interior sampling zone (for table group)
 # ============================================================
@@ -93,6 +143,111 @@ TABLE_SAMPLE_Y_MAX = -6.0
 TABLE_FALLBACK_X = -7.50
 TABLE_FALLBACK_Y = -7.50
 TABLE_GROUP_MAX_TRIES = 300
+
+# No-spawn boundaries use the side containing this seed as the valid side.
+SPAWN_REGION_SEED = (TABLE_FALLBACK_X, TABLE_FALLBACK_Y)
+SPAWN_BOUNDARY_TOLERANCE = 0.08
+
+# Conservative fallback no-spawn boundaries. Runtime stage geometry is preferred.
+FALLBACK_NO_SPAWN_BOUNDARIES: List[SpawnBoundary] = [
+    SpawnBoundary(
+        name="no_spawn_front_wall",
+        center=(-7.5, FRONT_WALL_LINE_Y),
+        bbox=BBox(half_w=5.35, half_d=0.12),
+    ),
+    SpawnBoundary(
+        name="no_spawn_front_wall_right_extension",
+        center=(-1.35, FRONT_WALL_LINE_Y),
+        bbox=BBox(half_w=0.85, half_d=0.12),
+    ),
+    SpawnBoundary(
+        name="no_spawn_new_partition_wall",
+        center=(RIGHT_WALL_LINE_X, -8.15),
+        bbox=BBox(half_w=0.12, half_d=3.15),
+    ),
+    SpawnBoundary(
+        name="no_spawn_back_wall",
+        center=(-8.35, BACK_WALL_LINE_Y),
+        bbox=BBox(half_w=4.35, half_d=0.12),
+    ),
+]
+
+# Stricter usable area for the table group, including the virtual open side.
+TABLE_GROUP_X_MIN = -12.35
+TABLE_GROUP_X_MAX = RIGHT_WALL_LINE_X - 0.35
+TABLE_GROUP_Y_MIN = BACK_WALL_LINE_Y + 0.35
+TABLE_GROUP_Y_MAX = FRONT_WALL_LINE_Y - 0.35
+
+# Robot-facing targets are intentionally narrower than the full room bounds.
+# The open side is never a selectable facing layout; the robot may face the
+# authored back wall or the new partition wall.
+OPEN_WALL_NAMES = ("front_open", "left_open")
+BACK_WALL_TARGET_X_MIN = -10.0
+BACK_WALL_TARGET_X_MAX = -5.0
+NEW_WALL_TARGET_Y_MIN = -9.0
+NEW_WALL_TARGET_Y_MAX = -6.0
+ROBOT_FACING_MAX_YAW_OFFSET_RAD = math.radians(15.0)
+
+
+@dataclass(frozen=True)
+class RobotFacingLayout:
+    """Robot/table placement mode that keeps the robot facing a room wall."""
+    name: str
+    wall: str
+    target_axis: str
+    fixed_coord: float
+    sample_min: float
+    sample_max: float
+    yaw_center: float
+
+
+ROBOT_FACING_LAYOUTS: List[RobotFacingLayout] = [
+    RobotFacingLayout(
+        name="face_back_wall",
+        wall="back",
+        target_axis="y",
+        fixed_coord=BACK_WALL_LINE_Y,
+        sample_min=BACK_WALL_TARGET_X_MIN,
+        sample_max=BACK_WALL_TARGET_X_MAX,
+        yaw_center=-math.pi / 2,
+    ),
+    RobotFacingLayout(
+        name="face_new_wall",
+        wall="new_wall",
+        target_axis="x",
+        fixed_coord=RIGHT_WALL_LINE_X,
+        sample_min=NEW_WALL_TARGET_Y_MIN,
+        sample_max=NEW_WALL_TARGET_Y_MAX,
+        yaw_center=0.0,
+    ),
+]
+
+
+def _validate_robot_facing_layouts() -> None:
+    """Guard against accidentally aiming the robot at the empty/open side."""
+    for layout in ROBOT_FACING_LAYOUTS:
+        if layout.wall in OPEN_WALL_NAMES:
+            raise ValueError(f"robot facing layout targets open wall: {layout}")
+        if layout.sample_min >= layout.sample_max:
+            raise ValueError(f"invalid wall target span: {layout}")
+        if layout.target_axis == "y":
+            if not (ROOM_Y_MIN <= layout.fixed_coord <= ROOM_Y_MAX):
+                raise ValueError(f"wall target y outside room: {layout}")
+            if layout.sample_min < ROOM_X_MIN or layout.sample_max > ROOM_X_MAX:
+                raise ValueError(f"wall target x span outside room: {layout}")
+        elif layout.target_axis == "x":
+            if not (ROOM_X_MIN <= layout.fixed_coord <= ROOM_X_MAX):
+                raise ValueError(f"wall target x outside room: {layout}")
+            if layout.sample_min < ROOM_Y_MIN or layout.sample_max > ROOM_Y_MAX:
+                raise ValueError(f"wall target y span outside room: {layout}")
+        else:
+            raise ValueError(f"invalid wall target axis: {layout}")
+
+
+_validate_robot_facing_layouts()
+
+# Keep strict wall-facing placement unless training needs controlled jitter.
+ROBOT_FACING_YAW_JITTER_RAD = 0.0
 
 # ============================================================
 # Desk geometry
@@ -139,11 +294,11 @@ class WallPropMeta:
     """Placement metadata for a wall prop."""
     usd_name: str
     bbox: BBox              # footprint in the object's local frame
-    # Local XY offset used to align the viewport footprint with the mesh.
-    # Placement collision behavior intentionally remains root-centered.
+    # Local XY offset from the asset root to the footprint center.
     bbox_center: Tuple[float, float] = (0.0, 0.0)
     tall: bool = False
     wall_offset: float = 0.0  # extra push away from wall surface (metres)
+    wall_offsets: Dict[str, float] | None = None
     yaw_offset: float = 0.0   # yaw adjustment relative to wall base yaw (radians)
     allowed_walls: Tuple[str, ...] = ("back", "right")
 
@@ -155,24 +310,27 @@ WALL_PROP_META: Dict[str, WallPropMeta] = {
         bbox_center=(0.415679, 0.303706),
         tall=True,
         wall_offset=0.25,
+        wall_offsets={"back": 0.431706, "right": 0.131706},
         yaw_offset=math.pi,
-        allowed_walls=("right",),
+        allowed_walls=("back", "right"),
     ),
     "shelf_set": WallPropMeta(
         "SM_ShelfSet_01a",
         bbox=BBox(half_w=0.861, half_d=0.280),
         tall=True,
         wall_offset=-0.220,
+        wall_offsets={"back": 0.080, "right": -0.220},
         yaw_offset=math.pi,
-        allowed_walls=("right",),
+        allowed_walls=("back", "right"),
     ),
     "supply_cabinet": WallPropMeta(
         "SM_SupplyCabinet_01c",
         bbox=BBox(half_w=0.367, half_d=0.737),
         tall=True,
         wall_offset=0.167,
+        wall_offsets={"back": 0.167, "right": -0.133},
         yaw_offset=math.pi / 2,
-        allowed_walls=("back",),
+        allowed_walls=("back", "right"),
     ),
     "trash_can": WallPropMeta(
         "SM_TrashCan",

@@ -27,9 +27,10 @@ ROBOT_POS  = (-7.4, -7.0, 0.76)
 OBJECT_POS = (-7.38, -7.33, 0.84)   # red block spawn centre
 ```
 
-The room's baked-in furniture stays as visual backdrop; the extra props the
-parent randomized-room scene would spawn are disabled (set to `None`) to avoid
-duplicate meshes and a runtime Omniverse-CDN dependency.
+The calibrated robot/table/object rig stays fixed, while the inherited wall
+props are spawned separately and randomized on every full environment reset.
+Their placement comes from `tasks/utils/room_randomizer/constants.py`; the
+matching furniture baked into the room shell is hidden to avoid duplicates.
 
 **Anything that references a world coordinate had to be translated by `T` too** —
 the success/out-of-range box and the reward's tray footprint. Forgetting this is
@@ -55,7 +56,8 @@ This keeps the block in the region a **left-hand-only** policy can reach
 which the left arm struggles to reach). Widen it back toward
 `{"x": [-0.15, 0.0], "y": [-0.1, 0.1]}` if you want the full workspace.
 
-> Editing this cfg requires a **sim restart** to take effect.
+> Editing this cfg or the shared room-randomizer constants requires a **sim
+> restart** to take effect.
 
 ---
 
