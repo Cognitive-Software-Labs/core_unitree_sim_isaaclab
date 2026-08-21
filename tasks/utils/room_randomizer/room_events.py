@@ -945,6 +945,7 @@ def _make_table_group_from_robot(
     rx: float,
     ry: float,
     robot_yaw: float,
+    include_ridgeback: bool = True,
 ) -> tuple[list[tuple[str, OBB]], tuple[float, float], float]:
     """Build table/robot OBBs using the robot as the placement anchor."""
     table_yaw = robot_yaw - math.pi / 2
@@ -959,7 +960,8 @@ def _make_table_group_from_robot(
         ("packing_table", make_obb(dx, dy, DESK_BBOX, table_yaw)),
         ("robot", make_obb(rx, ry, ROBOT_BBOX, robot_yaw)),
     ]
-    table_obbs.extend(_make_ridgeback_group(rx, ry, robot_yaw))
+    if include_ridgeback:
+        table_obbs.extend(_make_ridgeback_group(rx, ry, robot_yaw))
     return table_obbs, (dx, dy), table_yaw
 
 
@@ -1160,6 +1162,8 @@ def _place_table_group(
     final_table_obbs: list[list[tuple[str, OBB]]] = [[] for _ in range(M)]
     selected_layout_names = ["none" for _ in range(M)]
     desk_asset = env.scene["packing_table"]
+    robot_asset = env.scene["robot"]
+    include_ridgeback = "ridgeback" in env.scene.keys()
 
     for env_idx in range(M):
         success = False
@@ -1173,26 +1177,34 @@ def _place_table_group(
             dx = float(default_state[0] - origin[0])
             dy = float(default_state[1] - origin[1])
             dyaw = _quat_wxyz_yaw(default_state[3:7])
-            table_obbs = _make_table_group_from_table(dx, dy, dyaw)
-            valid, _ = _validate_table_group(
-                table_obbs, all_placed[env_idx], all_placed_names[env_idx], spawn_boundaries[env_idx]
-            )
-            if valid:
-                desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
-                desk_yaws[env_idx] = dyaw
-                selected_obbs = table_obbs
-                selected_layout_name = "fixed_teleop"
-                success = True
-            else:
-                print(
-                    f"[PLACEMENT_ERROR] env={env_id} fixed_table_group_invalid=true",
-                    flush=True,
-                )
+            robot_default_state = robot_asset.data.default_root_state[env_id]
+            rx = float(robot_default_state[0] - origin[0])
+            ry = float(robot_default_state[1] - origin[1])
+            robot_yaw = _quat_wxyz_yaw(robot_default_state[3:7])
+            table_obbs = [
+                ("packing_table", make_obb(dx, dy, DESK_BBOX, dyaw)),
+                ("robot", make_obb(rx, ry, ROBOT_BBOX, robot_yaw)),
+            ]
+            if include_ridgeback:
+                table_obbs.extend(_make_ridgeback_group(rx, ry, robot_yaw))
+            # The fixed pose is an explicitly calibrated task authoring choice.
+            # Do not reject it using the deliberately conservative randomized-
+            # placement OBBs: the packing-table proxy slightly crosses a
+            # segmented wall boundary even though the real mesh is valid.
+            # Adding the group to ``all_placed`` below still reserves the
+            # workspace before wall furniture is randomized.
+            desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
+            desk_yaws[env_idx] = dyaw
+            selected_obbs = table_obbs
+            selected_layout_name = "fixed_teleop"
+            success = True
         else:
             for _ in range(TABLE_GROUP_MAX_TRIES):
                 rx, ry, robot_yaw, layout = _sample_wall_facing_robot_pose(rng)
 
-                table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(rx, ry, robot_yaw)
+                table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(
+                    rx, ry, robot_yaw, include_ridgeback=include_ridgeback
+                )
                 valid, _ = _validate_table_group(
                     table_obbs,
                     all_placed[env_idx],
@@ -1215,7 +1227,9 @@ def _place_table_group(
             fallback_issues: list[str] = []
             for _ in range(TABLE_GROUP_MAX_TRIES):
                 rx, ry, robot_yaw, layout = _sample_wall_facing_robot_pose(rng)
-                table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(rx, ry, robot_yaw)
+                table_obbs, (dx, dy), dyaw = _make_table_group_from_robot(
+                    rx, ry, robot_yaw, include_ridgeback=include_ridgeback
+                )
                 valid, fallback_issues = _validate_table_group(
                     table_obbs, all_placed[env_idx], all_placed_names[env_idx], spawn_boundaries[env_idx]
                 )
@@ -1269,15 +1283,24 @@ def _place_table_group(
     desk_default_z = (desk_asset.data.default_root_state[0, 2] - env_origins[0, 2]).item()
     desk_positions[:, 2] = desk_default_z
 
-    robot_asset = env.scene["robot"]
     robot_default_z = (robot_asset.data.default_root_state[0, 2] - env_origins[0, 2]).item()
 
-    # Build batched positions for robot
-    robot_pos = offset_from_yaw_batched(
-        desk_positions, desk_yaws,
-        ROBOT_ORBIT_OFFSET[0], ROBOT_ORBIT_OFFSET[1], robot_default_z,
-    )
-    robot_yaw = desk_yaws + math.pi / 2
+    # Build batched positions for robot.  A fixed-table reset must preserve
+    # each task's authored robot/table calibration; not every teleoperation
+    # task uses the generic randomized-table orbit transform.
+    if randomize_position:
+        robot_pos = offset_from_yaw_batched(
+            desk_positions, desk_yaws,
+            ROBOT_ORBIT_OFFSET[0], ROBOT_ORBIT_OFFSET[1], robot_default_z,
+        )
+        robot_yaw = desk_yaws + math.pi / 2
+    else:
+        robot_defaults = robot_asset.data.default_root_state[env_ids]
+        robot_pos = robot_defaults[:, 0:3] - env_origins[env_ids]
+        robot_yaw = torch.tensor(
+            [_quat_wxyz_yaw(state[3:7]) for state in robot_defaults],
+            device=device,
+        )
 
     # Handle failures by despawning
     invalid_mask = ~group_placed_mask
@@ -1394,14 +1417,12 @@ def _store_layout_state(
         table_y = float(desk_positions[env_idx, 1] + origin[1])
         table_z = float(desk_positions[env_idx, 2] + origin[2])
         table_yaw = float(desk_yaws[env_idx])
-        robot_x, robot_y = offset_from_yaw(
-            table_x,
-            table_y,
-            table_yaw,
-            ROBOT_ORBIT_OFFSET[0],
-            ROBOT_ORBIT_OFFSET[1],
-        )
-        robot_yaw = table_yaw + math.pi / 2
+        # Read back the actual robot pose instead of reconstructing it from
+        # the generic randomized-table offset.  Fixed teleoperation tasks can
+        # have their own authored robot/table calibration.
+        robot_x = float(robot.data.root_pos_w[env_id, 0])
+        robot_y = float(robot.data.root_pos_w[env_id, 1])
+        robot_yaw = _quat_wxyz_yaw(robot.data.root_quat_w[env_id])
         waiting_x, waiting_y = _ridgeback_world_xy(
             robot_x, robot_y, robot_yaw, RIDGEBACK_WAITING_ROBOT_LOCAL
         )

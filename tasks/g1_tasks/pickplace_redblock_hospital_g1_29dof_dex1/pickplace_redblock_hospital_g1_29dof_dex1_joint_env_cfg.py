@@ -49,7 +49,6 @@ from tasks.common_scene.base_scene_pickplace_cylindercfg import (
 )
 from tasks.utils.room_randomizer import (
     randomize_pickplace_room_layout,
-    randomize_wall_props_layout,
 )
 from tasks.utils.room_randomizer.room_events import reset_target_on_current_table
 from tasks.utils.room_randomizer.pickplace_config import (
@@ -106,18 +105,14 @@ def reset_hospital_teleop_scene(
         env_ids = torch.arange(env.num_envs, device=env.device)
 
     base_mdp.reset_scene_to_default(env, env_ids)
-    if randomize_table_position:
-        randomize_pickplace_room_layout(
-            env,
-            env_ids,
-            wall_prop_names=WALL_PROP_NAMES,
-            table_prop_names=REDBLOCK_TABLE_PROP_NAMES,
-            min_table_objects=len(REDBLOCK_TABLE_PROP_NAMES),
-            randomize_table_position=True,
-        )
-    else:
-        randomize_wall_props_layout(env, env_ids, wall_prop_names=WALL_PROP_NAMES)
-        _reset_fixed_table_target(env, env_ids)
+    randomize_pickplace_room_layout(
+        env,
+        env_ids,
+        wall_prop_names=WALL_PROP_NAMES,
+        table_prop_names=REDBLOCK_TABLE_PROP_NAMES,
+        min_table_objects=len(REDBLOCK_TABLE_PROP_NAMES),
+        randomize_table_position=randomize_table_position,
+    )
 
     mode = "full randomization" if randomize_table_position else "fixed table"
     print(f"[Meta Quest reset] hospital scene restored ({mode})", flush=True)

@@ -46,6 +46,29 @@ class HospitalTabletopAssetTests(unittest.TestCase):
             self.assertRegex(source, rf"\b{prop_name}\s*:")
             self.assertIn(f'"{prop_name}"', source)
 
+    def test_fixed_table_startup_places_every_configured_tabletop_prop(self):
+        config_path = (
+            REPO_ROOT
+            / "tasks/g1_tasks/pickplace_redblock_hospital_g1_29dof_dex1"
+            / "pickplace_redblock_hospital_g1_29dof_dex1_joint_env_cfg.py"
+        )
+        source = config_path.read_text(encoding="utf-8")
+        reset_source = re.search(
+            r"def reset_hospital_teleop_scene[\s\S]+?(?=\ndef reset_hospital_target)",
+            source,
+        )
+        self.assertIsNotNone(reset_source)
+        reset_source = reset_source.group(0)
+        self.assertIn("randomize_pickplace_room_layout(", reset_source)
+        self.assertIn("table_prop_names=REDBLOCK_TABLE_PROP_NAMES", reset_source)
+        self.assertIn(
+            "min_table_objects=len(REDBLOCK_TABLE_PROP_NAMES)", reset_source
+        )
+        self.assertIn(
+            "randomize_table_position=randomize_table_position", reset_source
+        )
+        self.assertNotIn("randomize_wall_props_layout", reset_source)
+
 
 if __name__ == "__main__":
     unittest.main()

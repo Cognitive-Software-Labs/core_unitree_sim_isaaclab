@@ -42,8 +42,7 @@ def main():
     pub.Init()
 
     # Create standard string message
-    msg = String_()
-    msg.data = category_code
+    msg = String_(data=category_code)
 
     print(f"Sending reset command: category_code={category_code} ({args.type.upper()} reset)...")
     
