@@ -71,36 +71,6 @@ def Xform "World"
 
             def Xform "Walls"
             {
-                def "Geo_M3_SideWall_39" (
-                    apiSchemas = None
-                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M3_SideWall_39.usd@
-                )
-                {
-                    quatf xformOp:orient = (1, 0, 0, 0)
-                    float3 xformOp:scale = (1, 1, 1)
-                    double3 xformOp:translate = (-12.525215148925781, -15.307943344116211, 2.850831037903845e-7)
-                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
-
-                    over "Geo_M3_SideWall"
-                    {
-                        quatf xformOp:orient = (0.70710677, 0, 0, 0.70710677)
-                        float3 xformOp:scale = (1, 1, 1)
-                        double3 xformOp:translate = (10.056846005643859, 6.6711602772515715, 0)
-                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
-
-                        over "Geo_M3_SideWall"
-                        {
-                            over "Section0"
-                            {
-                            }
-
-                            over "Section1"
-                            {
-                            }
-                        }
-                    }
-                }
-
                 def "Geo_M1_SideWallPanel_95" (
                     apiSchemas = None
                     prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M1_SideWallPanel_95.usd@
@@ -185,25 +155,24 @@ def Xform "World"
                     }
                 }
 
-                def "Geo_M1_SideWall_12" (
+                def "Geo_M3_SideWall_41" (
                     apiSchemas = None
-                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M1_SideWall_11.usd@
+                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M3_SideWall_39.usd@
                 )
                 {
-                    quatf xformOp:orient = (6.123234e-17, 0, 0, 1)
+                    quatf xformOp:orient = (1, 0, 0, 0)
                     float3 xformOp:scale = (1, 1, 1)
-                    double3 xformOp:translate = (-2.1920250557928522, -5.4705004733585545, -1.0768279423700733e-7)
+                    double3 xformOp:translate = (-12.525215148925781, -15.307943344116211, 2.850831037903845e-7)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-                    over "Geo_M1_SideWall" (
-                        prepend apiSchemas = ["MaterialBindingAPI"]
-                    )
+                    over "Geo_M3_SideWall"
                     {
-                        rel material:binding = </World/Environment/props/room_props/ridgeback_03/Looks/material_white> (
-                            bindMaterialAs = "weakerThanDescendants"
-                        )
+                        quatf xformOp:orient = (0.70710677, 0, 0, 0.70710677)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (10.056846005643859, 6.6711602772515715, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-                        over "Geo_M1_SideWall"
+                        over "Geo_M3_SideWall"
                         {
                             over "Section0"
                             {
@@ -216,25 +185,88 @@ def Xform "World"
                     }
                 }
 
-                def "Geo_M1_SideWallPanel_96" (
+                def "Geo_M3_SideWall_42" (
                     apiSchemas = None
-                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M1_SideWallPanel_95.usd@
+                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M3_SideWall_39.usd@
                 )
                 {
-                    quatf xformOp:orient = (6.123234e-17, 0, 0, 1)
+                    quatf xformOp:orient = (6.123234e-17, 6.123234e-17, 1, 6.123234e-17)
                     float3 xformOp:scale = (1, 1, 1)
-                    double3 xformOp:translate = (2.0628003846113465, -1.7022783274683064, -5.746766191805364e-7)
+                    double3 xformOp:translate = (-8.505807426186426, -8.300000123679638, 2.729786883426553)
                     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-                    over "Geo_M1_SideWallPanel"
+                    over "Geo_M3_SideWall"
                     {
-                        quatf xformOp:orient = (1, 0, 0, 0)
+                        quatf xformOp:orient = (0.70710677, 0, 0, 0.70710677)
                         float3 xformOp:scale = (1, 1, 1)
-                        double3 xformOp:translate = (4.371996963268662, 3.9249891303809594, 0)
+                        double3 xformOp:translate = (10.056846005643859, 3.9103244832661233, 0)
                         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-                        over "Geo_M1_SideWallPanel"
+                        over "Geo_M3_SideWall"
                         {
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-7.031148227166894, 10.014921191979777, -0.26425761343008203)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                            over "Section0"
+                            {
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (0.01, 0.01, 0.01)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            over "Section1"
+                            {
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (0.01, 0.01, 0.01)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+                        }
+                    }
+                }
+
+                def "Geo_M3_SideWall_43" (
+                    apiSchemas = None
+                    prepend payload = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Environments/Hospital/Props/Geo_M3_SideWall_39.usd@
+                )
+                {
+                    quatf xformOp:orient = (6.123234e-17, 6.123234e-17, 1, 6.123234e-17)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (-8.505807426186426, -8.300000123679638, 2.729786883426553)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    over "Geo_M3_SideWall"
+                    {
+                        quatf xformOp:orient = (0.70710677, 0, 0, 0.70710677)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (10.056846005643859, 3.9103244832661233, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        over "Geo_M3_SideWall"
+                        {
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-4.268510839393643, 10.014921097419947, -0.2642576134301642)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                            over "Section0"
+                            {
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (0.01, 0.01, 0.01)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            over "Section1"
+                            {
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (0.01, 0.01, 0.01)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
                         }
                     }
                 }

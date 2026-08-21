@@ -9,7 +9,7 @@ import torch
 import isaaclab.envs.mdp as base_mdp
 from tasks.common_event.event_manager import SimpleEvent, SimpleEventManager
 
-from .room_events import randomize_pickplace_room_layout
+from .room_events import randomize_pickplace_room_layout, randomize_wall_props_layout
 
 WALL_PROP_NAMES = [
     "medical_cabinet",
@@ -51,6 +51,13 @@ def reset_all_then_randomize_room(env) -> None:
         table_prop_names=TABLE_PROP_NAMES,
         min_table_objects=len(TABLE_PROP_NAMES),
     )
+
+
+def reset_all_then_randomize_wall_props(env) -> None:
+    """Reset a fixed task scene, then reapply wall placement from shared constants."""
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    base_mdp.reset_scene_to_default(env, env_ids)
+    randomize_wall_props_layout(env, env_ids, wall_prop_names=WALL_PROP_NAMES)
 
 
 def register_randomized_room_reset_events(cfg) -> None:

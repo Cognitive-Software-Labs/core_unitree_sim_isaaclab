@@ -50,15 +50,15 @@ The environment spawns each furniture prop as a full-detail **USD rigid object**
 
 | Module | Responsibility |
 |--------|---------------|
-| [constants.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/constants.py) | Room geometry, OBB sizes (`BBox`), wall zone definitions (`WallZone`), wall prop metadata (`WallPropMeta`), tabletop prop metadata, orbit offsets, asset USD paths |
-| [placement_utils.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/placement_utils.py) | Pure math: SAT collision (`obb_overlap`), room bounds check (`obb_inside_room`), yaw-to-quaternion (`yaw_to_quat`), coordinate transforms (`offset_from_yaw`, `build_root_state`) |
-| [room_scene_cfg.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/room_scene_cfg.py) | Isaac Lab scene definition. Each furniture prop is a `RigidObjectCfg` spawned via `_spawn_real_rigid_usd()`. The Ridgeback is an `ArticulationCfg`. Helper factories: `_kinematic_usd_cfg`, `_dynamic_usd_cfg` |
-| [room_events.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/room_events.py) | The "Director". On reset: hides duplicate visual props, then runs 3-phase OBB placement (wall props → table group → tabletop objects) |
-| [room_env_cfg.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/room_env_cfg.py) | Master configuration tying Scene + Events + sim settings. Uses GPU PhysX with Fabric. |
-| [run_randomizer.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/run_randomizer.py) | Executable launcher. Boots Isaac Sim, injects dummy managers, runs reset/step loop with optional camera capture. |
-| [paths.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/paths.py) | Location-independent path resolution for the room shell USD file. |
-| [test_placement.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/test_placement.py) | Standalone test (no Isaac Sim). Runs 6 room randomizations with matplotlib OBB visualization. |
-| [get_bounding_boxes.py](file:///Users/cezarioa/Projects/isaac-projects/room_randomizer_lab/get_bounding_boxes.py) | Utility to compute axis-aligned bounding boxes from USD assets on the Omniverse CDN. |
+| [constants.py](constants.py) | Room geometry, OBB sizes (`BBox`), wall zone definitions (`WallZone`), wall prop metadata (`WallPropMeta`), tabletop prop metadata, orbit offsets, asset USD paths |
+| [placement_utils.py](placement_utils.py) | Pure math: SAT collision (`obb_overlap`), room bounds check (`obb_inside_room`), yaw-to-quaternion (`yaw_to_quat`), coordinate transforms (`offset_from_yaw`, `build_root_state`) |
+| [room_scene_cfg.py](room_scene_cfg.py) | Isaac Lab scene definition. Each furniture prop is a `RigidObjectCfg` spawned via `_spawn_real_rigid_usd()`. The Ridgeback is an `ArticulationCfg`. Kinematic prop configs use `_kinematic_usd_cfg`. |
+| [room_events.py](room_events.py) | The "Director". On reset: hides duplicate visual props, then runs 3-phase OBB placement (wall props → table group → tabletop objects) |
+| [room_env_cfg.py](room_env_cfg.py) | Master configuration tying Scene + Events + sim settings. Uses GPU PhysX with Fabric. |
+| [run_randomizer.py](run_randomizer.py) | Executable launcher. Boots Isaac Sim, injects dummy managers, runs reset/step loop with optional camera capture. |
+| [paths.py](paths.py) | Location-independent path resolution for the room shell USD file. |
+| [test_placement.py](test_placement.py) | Standalone test (no Isaac Sim). Runs 6 room randomizations with matplotlib OBB visualization. |
+| [get_bounding_boxes.py](get_bounding_boxes.py) | Utility to compute axis-aligned bounding boxes from USD assets on the Omniverse CDN. |
 
 ### Asset Summary
 
