@@ -4,7 +4,7 @@ import tempfile
 import os
 import time
 import torch
-from dataclasses import MISSING
+from dataclasses import MISSING, dataclass
 
 from pink.tasks import FrameTask
 
@@ -29,18 +29,44 @@ from tasks.common_event.event_manager import SimpleEvent
 # import public scene configuration
 from tasks.common_scene.base_scene_randomized_pickplace_cfg import RandomizedRoomPickPlaceSceneCfg
 from tasks.utils.room_randomizer import randomize_pickplace_room_layout
-from tasks.utils.room_randomizer.constants import ROOM_X_MAX, ROOM_X_MIN, ROOM_Y_MAX, ROOM_Y_MIN
+from tasks.utils.room_randomizer.room_events import reset_target_on_current_table
 from tasks.utils.room_randomizer.pickplace_config import (
-    TABLE_PROP_NAMES,
+    HOSPITAL_TABLE_PROP_NAMES,
     WALL_PROP_NAMES,
     register_randomized_room_reset_events,
 )
-from tasks.common_scene.base_scene_pickplace_cylindercfg import project_root
+from tasks.common_scene.base_scene_pickplace_cylindercfg import TableCylinderSceneCfg, project_root
 
 
 RIDGEBACK_USD = (
     f"{project_root}/assets/robots/ridgeback_base_only.usda"
 )
+
+
+@dataclass
+class RidgebackAssistantState:
+    phase: str = "waiting"
+    grasp_candidate: tuple[str, str] | None = None
+    grasp_since: float | None = None
+    grasp_object_name: str | None = None
+    placement_since: float | None = None
+    demo_side: str | None = None
+    demo_at: float | None = None
+
+
+def _require_single_teleop_env(env) -> None:
+    if env.num_envs != 1:
+        raise ValueError(
+            "DDS teleoperation and the Ridgeback assistant require num_envs == 1; "
+            f"received {env.num_envs}"
+        )
+
+
+def _assistant_state(env, env_id: int = 0) -> RidgebackAssistantState:
+    states = getattr(env, "_ridgeback_assistant_states", None)
+    if states is None or env_id not in states:
+        raise RuntimeError("Ridgeback assistant has not been initialized by the full reset")
+    return states[env_id]
 
 
 def reset_ridgeback_assistant(
@@ -54,32 +80,33 @@ def reset_ridgeback_assistant(
     joint_vel = torch.zeros_like(joint_pos)
     ridgeback.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
     ridgeback.set_joint_position_target(joint_pos, env_ids=env_ids)
-    env._ridgeback_assistant_state = "waiting"
-    env._ridgeback_grasp_candidate = None
-    env._ridgeback_grasp_since = None
-    env._ridgeback_grasp_object_name = None
-    env._ridgeback_placement_since = None
-    env._ridgeback_demo_return_at = None
-    env._ridgeback_demo_object_placed = False
+    ridgeback.set_joint_velocity_target(joint_vel, env_ids=env_ids)
+    states = getattr(env, "_ridgeback_assistant_states", {})
+    demo_side = os.getenv("RIDGEBACK_ASSISTANT_DEMO", "").strip().lower()
+    demo_side = demo_side if demo_side in ("left", "right") else None
+    for env_id_tensor in env_ids:
+        env_id = int(env_id_tensor.item())
+        states[env_id] = RidgebackAssistantState(
+            demo_side=demo_side,
+            demo_at=time.monotonic() + 3.0 if demo_side else None,
+        )
+    env._ridgeback_assistant_states = states
+    env._ridgeback_assistant_error_reported = False
     print("[ridgeback assistant] reset -> waiting behind G1", flush=True)
 
 
 def update_ridgeback_assistant(env):
-    """Detect a stable left/right grasp and drive Ridgeback to that side.
-
-    This is intentionally a small deterministic test controller.  Ridgeback's
-    fixed articulation root stays behind G1; its authored planar X/Y/yaw joints
-    provide smooth physical motion to a side staging point and then the final
-    delivery point.
-    """
+    """Drive the assistant through robot-local targets from the room layout state."""
+    _require_single_teleop_env(env)
     ridgeback = env.scene["ridgeback"]
     robot = env.scene["robot"]
     graspable_names = ("object", "hand_sanitizer", "gauze_box", "specimen_cup")
+    layout_states = getattr(env, "_room_layout_state", None)
+    if not layout_states or 0 not in layout_states:
+        raise RuntimeError("Ridgeback assistant requires the current randomized room layout state")
+    layout = layout_states[0]
+    assistant = _assistant_state(env)
 
-    if not hasattr(env, "_ridgeback_assistant_state"):
-        env._ridgeback_assistant_state = "waiting"
-        env._ridgeback_grasp_candidate = None
-        env._ridgeback_grasp_since = None
     if not hasattr(env, "_ridgeback_left_hand_id"):
         left_ids, _ = robot.find_bodies("left_hand_base_link")
         right_ids, _ = robot.find_bodies("right_hand_base_link")
@@ -87,24 +114,38 @@ def update_ridgeback_assistant(env):
         env._ridgeback_right_hand_id = int(right_ids[0])
         ridgeback_base_ids, _ = ridgeback.find_bodies("base_link")
         env._ridgeback_base_body_id = int(ridgeback_base_ids[0])
-        demo_side = os.getenv("RIDGEBACK_ASSISTANT_DEMO", "").strip().lower()
-        env._ridgeback_demo_side = demo_side if demo_side in ("left", "right") else None
-        env._ridgeback_demo_enabled = bool(env._ridgeback_demo_side)
-        env._ridgeback_demo_at = time.monotonic() + 3.0 if env._ridgeback_demo_side else None
         print("[ridgeback assistant] active; waiting for a stable grasp", flush=True)
 
-    state = env._ridgeback_assistant_state
-    if state == "waiting":
-        left_pos = robot.data.body_pos_w[0, env._ridgeback_left_hand_id]
-        right_pos = robot.data.body_pos_w[0, env._ridgeback_right_hand_id]
+    phase = assistant.phase
+    if phase == "waiting":
+        authored_left = robot.data.body_pos_w[0, env._ridgeback_left_hand_id]
+        authored_right = robot.data.body_pos_w[0, env._ridgeback_right_hand_id]
+        robot_x, robot_y, _ = layout.robot_pose.position
+        cos_yaw = torch.cos(torch.tensor(layout.robot_pose.yaw, device=env.device))
+        sin_yaw = torch.sin(torch.tensor(layout.robot_pose.yaw, device=env.device))
+
+        def local_lateral(hand_pos):
+            dx = hand_pos[0] - robot_x
+            dy = hand_pos[1] - robot_y
+            return -sin_yaw * dx + cos_yaw * dy
+
+        # Resolve handedness in the randomized robot frame.  Positive local Y
+        # is left, irrespective of the selected wall or world orientation.
+        if float(local_lateral(authored_left)) >= float(local_lateral(authored_right)):
+            hands = {"left": authored_left, "right": authored_right}
+        else:
+            hands = {"left": authored_right, "right": authored_left}
         candidate = None
         candidate_distance = float("inf")
         for object_name in graspable_names:
             graspable = env.scene[object_name]
             object_pos = graspable.data.root_pos_w[0]
-            initial_z = float(graspable.data.default_root_state[0, 2])
-            left_dist = float(torch.linalg.vector_norm(object_pos - left_pos))
-            right_dist = float(torch.linalg.vector_norm(object_pos - right_pos))
+            placement = layout.tabletop_placements.get(object_name)
+            if placement is None:
+                continue
+            initial_z = layout.packing_table_pose.position[2] + placement.local_pose[2]
+            left_dist = float(torch.linalg.vector_norm(object_pos - hands["left"]))
+            right_dist = float(torch.linalg.vector_norm(object_pos - hands["right"]))
             nearest = "left" if left_dist < right_dist else "right"
             nearest_dist = min(left_dist, right_dist)
             # Require a real, sustained pickup.  This rejects a hand merely
@@ -114,55 +155,47 @@ def update_ridgeback_assistant(env):
                 candidate = (nearest, object_name)
                 candidate_distance = nearest_dist
         now = time.monotonic()
-        if env._ridgeback_demo_side and now >= env._ridgeback_demo_at:
-            candidate = (env._ridgeback_demo_side, "object")
-            env._ridgeback_grasp_candidate = candidate
-            env._ridgeback_grasp_since = now - 1.0
-            env._ridgeback_demo_side = None
+        if assistant.demo_side and assistant.demo_at is not None and now >= assistant.demo_at:
+            candidate = (assistant.demo_side, "object")
+            assistant.grasp_candidate = candidate
+            assistant.grasp_since = now - 1.0
+            assistant.demo_side = None
             print(f"[ridgeback assistant demo] simulating {candidate[0]}-hand grasp", flush=True)
-        if candidate != env._ridgeback_grasp_candidate:
-            env._ridgeback_grasp_candidate = candidate
-            env._ridgeback_grasp_since = now if candidate else None
-        elif candidate and env._ridgeback_grasp_since is not None and now - env._ridgeback_grasp_since >= 0.35:
+        if candidate != assistant.grasp_candidate:
+            assistant.grasp_candidate = candidate
+            assistant.grasp_since = now if candidate else None
+        elif candidate and assistant.grasp_since is not None and now - assistant.grasp_since >= 0.35:
             candidate_side, candidate_object = candidate
-            # Calibrated against the visible fixed-base G1 orientation.
-            env._ridgeback_assistant_side = -1.0 if candidate_side == "left" else 1.0
-            env._ridgeback_grasp_object_name = candidate_object
-            env._ridgeback_assistant_state = "staging"
-            state = "staging"
+            assistant.grasp_object_name = candidate_object
+            assistant.phase = "staging"
+            phase = "staging"
             print(
                 f"[ridgeback assistant] {candidate_object} in {candidate_side} hand confirmed; "
                 f"approaching {candidate_side} side",
                 flush=True,
             )
 
-    if state in ("staging", "side"):
-        side = env._ridgeback_assistant_side
-        # The fixed root is at (-0.15, -1.80).  First move laterally behind G1,
-        # then advance beside it.  Root orientation is identity, so planar joint
-        # X/Y correspond directly to world X/Y offsets.
-        if state == "staging":
-            target = torch.tensor([[side * 0.58, 0.80, 1.5708]], device=env.device)
-        else:
-            # Restore the original reachable delivery pose.  The waiting root
-            # moved farther back, so the larger Y joint travel preserves the
-            # same world-space side position used by the first prototype.
-            target = torch.tensor([[side * 0.62, 1.53, 1.5708]], device=env.device)
+    if phase in ("staging", "side"):
+        side = assistant.grasp_candidate[0]
+        target_name = f"staging_{side}" if phase == "staging" else f"delivery_{side}"
+        target = torch.tensor([layout.ridgeback_joint_targets[target_name]], device=env.device)
         ridgeback.set_joint_position_target(target)
         current = ridgeback.data.joint_pos[0]
         if float(torch.max(torch.abs(current - target[0]))) < 0.10:
-            if state == "staging":
-                env._ridgeback_assistant_state = "side"
+            if phase == "staging":
+                assistant.phase = "side"
                 print("[ridgeback assistant] staging point reached; moving beside G1", flush=True)
             else:
-                env._ridgeback_assistant_state = "holding"
-                env._ridgeback_placement_since = None
+                assistant.phase = "holding"
+                assistant.placement_since = None
                 ridgeback.set_joint_position_target(target)
                 ridgeback.set_joint_velocity_target(torch.zeros_like(target))
                 print("[ridgeback assistant] side delivery pose reached; holding", flush=True)
-    elif state == "holding":
-        side = env._ridgeback_assistant_side
-        target = torch.tensor([[side * 0.62, 1.53, 1.5708]], device=env.device)
+    elif phase == "holding":
+        side = assistant.grasp_candidate[0]
+        target = torch.tensor(
+            [layout.ridgeback_joint_targets[f"delivery_{side}"]], device=env.device
+        )
         # Keep the chassis fully stationary beside G1.  Returning is unlocked
         # only after the real object has remained inside the basket.
         ridgeback.set_joint_position_target(target)
@@ -170,7 +203,7 @@ def update_ridgeback_assistant(env):
         now = time.monotonic()
         base_pos = ridgeback.data.body_pos_w[0, env._ridgeback_base_body_id]
         base_quat = ridgeback.data.body_quat_w[0, env._ridgeback_base_body_id]
-        carried_object = env.scene[getattr(env, "_ridgeback_grasp_object_name", "object")]
+        carried_object = env.scene[assistant.grasp_object_name or "object"]
         object_pos = carried_object.data.root_pos_w[0]
         delta_x = object_pos[0] - base_pos[0]
         delta_y = object_pos[1] - base_pos[1]
@@ -201,46 +234,44 @@ def update_ridgeback_assistant(env):
         )
         demo_placed = False
         if in_basket:
-            if env._ridgeback_placement_since is None:
+            if assistant.placement_since is None:
                 # Demo has already waited three seconds; real placement still
                 # needs a stability window to reject momentary fly-through.
-                env._ridgeback_placement_since = now - (1.0 if demo_placed else 0.0)
-            elif now - env._ridgeback_placement_since >= 0.80:
-                env._ridgeback_assistant_state = "returning_side"
+                assistant.placement_since = now - (1.0 if demo_placed else 0.0)
+            elif now - assistant.placement_since >= 0.80:
+                assistant.phase = "returning_side"
                 print("[ridgeback assistant] placement confirmed; returning behind G1", flush=True)
         else:
-            env._ridgeback_placement_since = None
-    elif state in ("returning_side", "returning_home"):
-        side = env._ridgeback_assistant_side
-        if state == "returning_side":
-            target = torch.tensor([[side * 0.58, 0.80, 1.5708]], device=env.device)
+            assistant.placement_since = None
+    elif phase in ("returning_side", "returning_home"):
+        side = assistant.grasp_candidate[0]
+        if phase == "returning_side":
+            target = torch.tensor(
+                [layout.ridgeback_joint_targets[f"staging_{side}"]], device=env.device
+            )
         else:
-            target = torch.zeros((1, 3), device=env.device)
+            target = torch.tensor([layout.ridgeback_joint_targets["waiting"]], device=env.device)
         ridgeback.set_joint_position_target(target)
         current = ridgeback.data.joint_pos[0]
         if float(torch.max(torch.abs(current - target[0]))) < 0.10:
-            if state == "returning_side":
-                env._ridgeback_assistant_state = "returning_home"
+            if phase == "returning_side":
+                assistant.phase = "returning_home"
                 print("[ridgeback assistant] cleared G1; returning to home pose", flush=True)
             else:
-                # Complete the cycle only after Ridgeback is home: return the
-                # object from the basket to its authored tabletop pose.
-                object_name = getattr(env, "_ridgeback_grasp_object_name", None)
+                object_name = assistant.grasp_object_name
                 if object_name:
-                    carried_object = env.scene[object_name]
-                    object_state = carried_object.data.default_root_state[[0]].clone()
-                    object_state[:, :3] += env.scene.env_origins[[0]]
-                    object_state[:, 7:13] = 0.0
-                    carried_object.write_root_state_to_sim(object_state)
+                    reset_target_on_current_table(
+                        env, torch.tensor([0], device=env.device), asset_name=object_name
+                    )
                     print(
                         f"[ridgeback assistant] {object_name} reset to tabletop for next cycle",
                         flush=True,
                     )
-                env._ridgeback_assistant_state = "waiting"
-                env._ridgeback_grasp_candidate = None
-                env._ridgeback_grasp_since = None
-                env._ridgeback_grasp_object_name = None
-                env._ridgeback_placement_since = None
+                assistant.phase = "waiting"
+                assistant.grasp_candidate = None
+                assistant.grasp_since = None
+                assistant.grasp_object_name = None
+                assistant.placement_since = None
                 ridgeback.set_joint_position_target(target)
                 print("[ridgeback assistant] home behind G1; waiting", flush=True)
 
@@ -280,16 +311,12 @@ def respawn_dropped_object(
     if len(dropped_ids) == 0:
         return
 
-    root_state = object_asset.data.default_root_state[dropped_ids].clone()
-    root_state[:, :3] += env.scene.env_origins[dropped_ids]
-    root_state[:, 7:13] = 0.0
     before = root_pos[dropped].clone()
-    object_asset.write_root_pose_to_sim(root_state[:, :7], env_ids=dropped_ids)
-    object_asset.write_root_velocity_to_sim(root_state[:, 7:13], env_ids=dropped_ids)
-    object_asset.reset(dropped_ids)
+    reset_target_on_current_table(env, dropped_ids, asset_name=asset_cfg.name)
+    after = object_asset.data.root_pos_w[dropped_ids]
     print(
         "[bottle respawn] dropped/lost: "
-        f"{before[0].tolist()} -> {root_state[0, :3].tolist()}",
+        f"{before[0].tolist()} -> {after[0].tolist()}",
         flush=True,
     )
 
@@ -299,27 +326,22 @@ def never_terminate(env) -> torch.Tensor:
     return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
 
 
-def reset_all_teleop_scene(env):
-    """Reset the full teleop scene and explicitly restore the medicine bottle."""
-    env_ids = torch.arange(env.num_envs, device=env.device)
-    object_asset = env.scene["object"]
-    before = object_asset.data.root_pos_w[env_ids].clone()
-
+def reset_all_teleop_scene(env, env_ids: torch.Tensor | None = None):
+    """Execute the one authoritative randomized teleoperation reset sequence."""
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
     base_mdp.reset_scene_to_default(env, env_ids)
-    reset_ridgeback_assistant(env, env_ids)
-
-    # Explicitly restore the task bottle instead of relying only on the generic
-    # scene traversal. This also guarantees zero residual linear/angular speed.
-    bottle_state = object_asset.data.default_root_state[env_ids].clone()
-    bottle_state[:, 0] = env.scene.env_origins[env_ids, 0] - 0.68
-    bottle_state[:, 1] = env.scene.env_origins[env_ids, 1] + 0.40
-    bottle_state[:, 2] = env.scene.env_origins[env_ids, 2] + 0.86
-    bottle_state[:, 7:13] = 0.0
-    object_asset.write_root_state_to_sim(bottle_state, env_ids=env_ids)
-    print(
-        "[reset all] bottle position: "
-        f"{before[0].tolist()} -> {bottle_state[0, :3].tolist()}"
+    randomize_pickplace_room_layout(
+        env,
+        env_ids,
+        wall_prop_names=WALL_PROP_NAMES,
+        table_prop_names=HOSPITAL_TABLE_PROP_NAMES,
+        min_table_objects=len(HOSPITAL_TABLE_PROP_NAMES),
     )
+    reset_ridgeback_assistant(env, env_ids)
+    print("[reset all] randomized teleoperation scene restored", flush=True)
+
+
 ##
 # Scene definition
 ##
@@ -334,6 +356,9 @@ class ObjectTableSceneCfg(RandomizedRoomPickPlaceSceneCfg):
     # Humanoid robot w/ arms higher
     # 5. humanoid robot configuration 
     robot: ArticulationCfg = G1RobotPresets.g1_29dof_dex1_base_fix()
+    # Preserve Shidan's medicine-bottle physics and mass configuration while
+    # the shared randomizer owns its table-local pose.
+    object: RigidObjectCfg = TableCylinderSceneCfg.object.copy()
     # The stock fixed-base asset hard-locks every waist joint with zero velocity
     # and kp/kd=10000.  Release yaw for VR torso turning while keeping waist
     # roll/pitch and the complete lower body fixed.
@@ -509,19 +534,9 @@ class RewardsCfg:
 
 @configclass
 class EventCfg:
-    randomize_room_layout = EventTermCfg(
-        func=randomize_pickplace_room_layout,
+    reset_teleop_scene = EventTermCfg(
+        func=reset_all_teleop_scene,
         mode="reset",
-        params={
-            "wall_prop_names": WALL_PROP_NAMES,
-            "table_prop_names": TABLE_PROP_NAMES,
-            "min_table_objects": 1,
-        },
-    )
-    reset_ridgeback = EventTermCfg(
-        func=reset_ridgeback_assistant,
-        mode="reset",
-        params={"asset_cfg": SceneEntityCfg("ridgeback")},
     )
     respawn_dropped_bottle = EventTermCfg(
         func=respawn_dropped_object,
@@ -581,12 +596,8 @@ class PickPlaceG129DEX1BaseFixEnvCfg(ManagerBasedRLEnvCfg):
         # Preserve the teleoperation-specific manual resets while retaining the
         # target branch's native room-randomization event above.
         self.event_manager.register("reset_object_self", SimpleEvent(
-            func=lambda env: base_mdp.reset_root_state_uniform(
-                env,
-                torch.arange(env.num_envs, device=env.device),
-                pose_range={"x": [-0.05, 0.05], "y": [0.0, 0.05]},
-                velocity_range={},
-                asset_cfg=SceneEntityCfg("object"),
+            func=lambda env: reset_target_on_current_table(
+                env, torch.arange(env.num_envs, device=env.device)
             )
         ))
 
@@ -618,7 +629,7 @@ class PickPlaceHospitalG129DEX1WholebodyEnvCfg(PickPlaceG129DEX1BaseFixEnvCfg):
 
     scene: ObjectTableWholebodySceneCfg = ObjectTableWholebodySceneCfg(
         num_envs=1,
-        env_spacing=2.5,
+        env_spacing=16.0,
         replicate_physics=True,
     )
 

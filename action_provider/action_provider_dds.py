@@ -14,6 +14,11 @@ class DDSActionProvider(ActionProvider):
         self.enable_dex3 = args_cli.enable_dex3_dds
         self.enable_inspire = args_cli.enable_inspire_dds
         self.env = env
+        if self.env.num_envs != 1:
+            raise ValueError(
+                "DDS teleoperation requires num_envs == 1; "
+                f"received {self.env.num_envs}"
+            )
         # Initialize DDS communication
         self.robot_dds = None
         self.gripper_dds = None

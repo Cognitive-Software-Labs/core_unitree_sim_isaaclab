@@ -25,6 +25,11 @@ class DDSRLActionProvider(ActionProvider):
         self.wh = args_cli.enable_wholebody_dds
         self.policy_path = f"{project_root}/"+args_cli.model_path
         self.env = env
+        if self.env.num_envs != 1:
+            raise ValueError(
+                "DDS Wholebody teleoperation requires num_envs == 1; "
+                f"received {self.env.num_envs}"
+            )
         # Initialize DDS communication
         self.robot_dds = None
         self.gripper_dds = None
