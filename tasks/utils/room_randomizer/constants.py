@@ -395,6 +395,10 @@ class TablePropMeta:
     bbox: BBox
     dynamic: bool = False
     mandatory: bool = False
+    # Fixed object-frame orientation composed after the sampled world yaw.
+    # This lets physics-ready assets whose authored vertical axis is not +Z
+    # remain upright without changing placement OBB semantics.
+    base_orientation_wxyz: Tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -441,6 +445,40 @@ TABLE_PROP_META: Dict[str, TablePropMeta] = {
     ),
     "specimen_cup": TablePropMeta(
         bbox=BBox(half_w=0.040, half_d=0.040), dynamic=True, mandatory=True
+    ),
+    "medical_bottle_a": TablePropMeta(
+        bbox=BBox(half_w=0.024491, half_d=0.024491), dynamic=True, mandatory=True
+    ),
+    "medical_bottle_b": TablePropMeta(
+        bbox=BBox(half_w=0.024491, half_d=0.024491), dynamic=True, mandatory=True
+    ),
+    "medical_bottle_c": TablePropMeta(
+        bbox=BBox(half_w=0.024491, half_d=0.024490), dynamic=True, mandatory=True
+    ),
+    # Natural-scale screenshot props used by the two-pill hospital task.
+    "pill_bottle_t": TablePropMeta(
+        bbox=BBox(half_w=0.014611, half_d=0.014611), dynamic=True, mandatory=True
+    ),
+    "pill_bottle_v": TablePropMeta(
+        bbox=BBox(half_w=0.013665, half_d=0.013665), dynamic=True, mandatory=True
+    ),
+    "medical_bottle_f": TablePropMeta(
+        bbox=BBox(half_w=0.030050, half_d=0.030050), dynamic=True, mandatory=True
+    ),
+    "marker_blue": TablePropMeta(
+        bbox=BBox(half_w=0.058500, half_d=0.012140), dynamic=True, mandatory=True
+    ),
+    "marker_yellow": TablePropMeta(
+        bbox=BBox(half_w=0.058500, half_d=0.012140), dynamic=True, mandatory=True
+    ),
+    "mustard_bottle": TablePropMeta(
+        bbox=BBox(half_w=0.048013, half_d=0.029125), dynamic=True, mandatory=True
+    ),
+    "cracker_box": TablePropMeta(
+        bbox=BBox(half_w=0.082018, half_d=0.035900), dynamic=True, mandatory=True
+    ),
+    "tomato_soup_can": TablePropMeta(
+        bbox=BBox(half_w=0.033830, half_d=0.033858), dynamic=True, mandatory=True
     ),
 }
 

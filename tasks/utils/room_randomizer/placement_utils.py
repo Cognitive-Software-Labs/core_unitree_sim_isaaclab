@@ -158,8 +158,14 @@ def build_root_state(
     env_origins: torch.Tensor,
     env_ids: torch.Tensor,
     default_state: torch.Tensor,
+    base_orientation_wxyz: tuple[float, float, float, float] | None = None,
 ) -> torch.Tensor:
-    """Build a (len(env_ids), 13) root-state tensor for write_root_state_to_sim."""
+    """Build a (len(env_ids), 13) root-state tensor for write_root_state_to_sim.
+
+    When supplied, ``base_orientation_wxyz`` is applied in the object frame
+    after the sampled world yaw. The default keeps the previous yaw-only
+    behavior for robots, furniture, and already-Z-up tabletop assets.
+    """
     state = default_state[env_ids].clone()
 
     state[:, 0] = pos[:, 0] + env_origins[env_ids, 0]
@@ -167,6 +173,24 @@ def build_root_state(
     state[:, 2] = pos[:, 2] + env_origins[env_ids, 2]
 
     quat = yaw_to_quat(yaw_rad)
+    if base_orientation_wxyz is not None:
+        base = torch.tensor(
+            base_orientation_wxyz,
+            device=quat.device,
+            dtype=quat.dtype,
+        ).expand_as(quat)
+        yaw_w, yaw_x, yaw_y, yaw_z = quat.unbind(dim=-1)
+        base_w, base_x, base_y, base_z = base.unbind(dim=-1)
+        quat = torch.stack(
+            (
+                yaw_w * base_w - yaw_x * base_x - yaw_y * base_y - yaw_z * base_z,
+                yaw_w * base_x + yaw_x * base_w + yaw_y * base_z - yaw_z * base_y,
+                yaw_w * base_y - yaw_x * base_z + yaw_y * base_w + yaw_z * base_x,
+                yaw_w * base_z + yaw_x * base_y - yaw_y * base_x + yaw_z * base_w,
+            ),
+            dim=-1,
+        )
+        quat = quat / torch.linalg.vector_norm(quat, dim=-1, keepdim=True).clamp_min(1.0e-12)
     state[:, 3:7] = quat
     state[:, 7:] = 0.0
 

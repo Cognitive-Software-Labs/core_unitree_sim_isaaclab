@@ -57,18 +57,41 @@ offset_from_yaw = P.offset_from_yaw
 RIDGE_PREFIX = "ridgeback_"
 TABLE_OBJECT_NAMES = (
     "object",
-    "hand_sanitizer",
-    "gauze_box",
-    "specimen_cup",
+    "medical_bottle_a",
+    "medical_bottle_b",
+    "medical_bottle_c",
 )
-REDBLOCK_TABLE_OBJECT_NAMES = (
+MEDICINE_BOTTLE_TABLE_OBJECT_NAMES = (
     "object",
-    "hand_sanitizer",
-    "medicine_bottle_a",
-    "medicine_bottle_b",
-    "blue_cube",
-    "yellow_cube",
+    "medical_bottle_a",
+    "medical_bottle_b",
+    "medical_bottle_c",
 )
+MEDICINE_BOTTLE_TABLE_PROP_META_OVERRIDES = {
+    "object": C.TablePropMeta(
+        bbox=BBox(half_w=0.035, half_d=0.035), dynamic=True, mandatory=True
+    ),
+    "medical_bottle_a": C.TablePropMeta(
+        bbox=BBox(half_w=0.024491, half_d=0.024491),
+        dynamic=True,
+        mandatory=True,
+    ),
+    "medical_bottle_b": C.TablePropMeta(
+        bbox=BBox(half_w=0.024491, half_d=0.024491),
+        dynamic=True,
+        mandatory=True,
+    ),
+    "medical_bottle_c": C.TablePropMeta(
+        bbox=BBox(half_w=0.024491, half_d=0.024490),
+        dynamic=True,
+        mandatory=True,
+    ),
+}
+MEDICINE_BOTTLE_SPAWN_REGION = (-0.52, 0.18, -0.16, 0.28)
+STATIC_LOGISTICS_CLUSTER = {
+    "ridgeback_left": ((-0.70, 0.85), -math.pi / 2, C.RIDGEBACK_BBOX),
+    "ridgeback_right": ((-0.70, -0.85), -math.pi / 2, C.RIDGEBACK_BBOX),
+}
 
 
 def _spawn_boundary_axis(box):
@@ -97,10 +120,14 @@ def _inside_group_bounds(box):
     )
 
 
-def _inside_tabletop(box):
+def _inside_tabletop(box, spawn_region=None):
+    if spawn_region is None:
+        x_min, x_max = C.DESK_LOCAL_X_MIN, C.DESK_LOCAL_X_MAX
+        y_min, y_max = C.DESK_LOCAL_Y_MIN, C.DESK_LOCAL_Y_MAX
+    else:
+        x_min, x_max, y_min, y_max = spawn_region
     return all(
-        C.DESK_LOCAL_X_MIN <= x <= C.DESK_LOCAL_X_MAX
-        and C.DESK_LOCAL_Y_MIN <= y <= C.DESK_LOCAL_Y_MAX
+        x_min <= x <= x_max and y_min <= y <= y_max
         for x, y in obb_corners(*box)
     )
 
@@ -230,7 +257,23 @@ def _ridgeback_group(rx, ry, robot_yaw):
     return result
 
 
-def _sample_group(rng):
+def _static_cluster_group(rx, ry, robot_yaw, static_cluster):
+    result = {}
+    for name, (local_xy, yaw_offset, bbox) in static_cluster.items():
+        world_xy = _robot_local_xy(rx, ry, robot_yaw, local_xy)
+        result[name] = make_obb(
+            *world_xy, bbox, robot_yaw + yaw_offset
+        )
+    return result
+
+
+def _is_moving_ridgeback_geometry(name):
+    return name == "ridgeback_waiting" or name.startswith(
+        ("ridgeback_staging_", "ridgeback_delivery_", "ridgeback_corridor_")
+    )
+
+
+def _sample_group(rng, include_mobile_ridgeback=True, static_cluster=None):
     layout = rng.choice(C.ROBOT_FACING_LAYOUTS)
     rx = rng.uniform(C.TABLE_SAMPLE_X_MIN, C.TABLE_SAMPLE_X_MAX)
     ry = rng.uniform(C.TABLE_SAMPLE_Y_MIN, C.TABLE_SAMPLE_Y_MAX)
@@ -252,7 +295,10 @@ def _sample_group(rng):
         "packing_table": make_obb(table_x, table_y, C.DESK_BBOX, table_yaw),
         "robot": make_obb(rx, ry, C.ROBOT_BBOX, robot_yaw),
     }
-    group.update(_ridgeback_group(rx, ry, robot_yaw))
+    if include_mobile_ridgeback:
+        group.update(_ridgeback_group(rx, ry, robot_yaw))
+    if static_cluster:
+        group.update(_static_cluster_group(rx, ry, robot_yaw, static_cluster))
     return group, layout.name
 
 
@@ -268,7 +314,7 @@ def _valid_group(group, obstacles, boundaries):
     items = list(group.items())
     for index, (name_a, box_a) in enumerate(items):
         for name_b, box_b in items[index + 1 :]:
-            if name_a.startswith(RIDGE_PREFIX) and name_b.startswith(RIDGE_PREFIX):
+            if _is_moving_ridgeback_geometry(name_a) and _is_moving_ridgeback_geometry(name_b):
                 continue
             if {name_a, name_b} == {"packing_table", "robot"}:
                 continue
@@ -278,25 +324,45 @@ def _valid_group(group, obstacles, boundaries):
     return True
 
 
-def _place_tabletop(rng, table_box, boundaries, table_object_names=TABLE_OBJECT_NAMES):
+def _place_tabletop(
+    rng,
+    table_box,
+    boundaries,
+    table_object_names=TABLE_OBJECT_NAMES,
+    table_prop_meta_overrides=None,
+    tabletop_spawn_region=None,
+):
     table_x, table_y, _, _, table_yaw = table_box
+    table_prop_meta = dict(C.TABLE_PROP_META)
+    if table_prop_meta_overrides is not None:
+        table_prop_meta.update(table_prop_meta_overrides)
     occupied = [make_obb(area.center[0], area.center[1], area.bbox, area.yaw) for area in C.TABLE_RESERVED_AREAS]
     placements = {}
     for name in table_object_names:
-        meta = C.TABLE_PROP_META[name]
+        meta = table_prop_meta[name]
         selected = None
         for _ in range(300):
             if name == "desk_lamp":
-                lx = rng.uniform(*C.DESK_LAMP_LOCAL_X_RANGE)
-                ly = rng.uniform(*C.DESK_LAMP_LOCAL_Y_RANGE)
+                if tabletop_spawn_region is None:
+                    x_range = C.DESK_LAMP_LOCAL_X_RANGE
+                    y_range = C.DESK_LAMP_LOCAL_Y_RANGE
+                else:
+                    x_range = tabletop_spawn_region[:2]
+                    y_range = tabletop_spawn_region[2:]
+                lx = rng.uniform(*x_range)
+                ly = rng.uniform(*y_range)
                 local_yaw = C.DESK_LAMP_LOCAL_YAW
             else:
-                low_x = C.TABLETOP_CUBE_LOCAL_X_MIN if name in C.TABLETOP_CUBE_PROP_NAMES else C.DESK_LOCAL_X_MIN
-                high_x = C.TABLETOP_CUBE_LOCAL_X_MAX if name in C.TABLETOP_CUBE_PROP_NAMES else C.DESK_LOCAL_X_MAX
-                lx, ly = rng.uniform(low_x, high_x), rng.uniform(C.DESK_LOCAL_Y_MIN, C.DESK_LOCAL_Y_MAX)
+                if tabletop_spawn_region is None:
+                    low_x = C.TABLETOP_CUBE_LOCAL_X_MIN if name in C.TABLETOP_CUBE_PROP_NAMES else C.DESK_LOCAL_X_MIN
+                    high_x = C.TABLETOP_CUBE_LOCAL_X_MAX if name in C.TABLETOP_CUBE_PROP_NAMES else C.DESK_LOCAL_X_MAX
+                    low_y, high_y = C.DESK_LOCAL_Y_MIN, C.DESK_LOCAL_Y_MAX
+                else:
+                    low_x, high_x, low_y, high_y = tabletop_spawn_region
+                lx, ly = rng.uniform(low_x, high_x), rng.uniform(low_y, high_y)
                 local_yaw = rng.uniform(0.0, 2.0 * math.pi)
             candidate = make_obb(lx, ly, meta.bbox, local_yaw)
-            if not _inside_tabletop(candidate):
+            if not _inside_tabletop(candidate, tabletop_spawn_region):
                 continue
             if obb_overlap_any(candidate, occupied, margin=C.DESK_OBJECT_MARGIN):
                 continue
@@ -317,7 +383,14 @@ def _place_tabletop(rng, table_box, boundaries, table_object_names=TABLE_OBJECT_
     return placements
 
 
-def randomize_one_room(seed_or_rng, table_object_names=TABLE_OBJECT_NAMES):
+def randomize_one_room(
+    seed_or_rng,
+    table_object_names=TABLE_OBJECT_NAMES,
+    table_prop_meta_overrides=None,
+    tabletop_spawn_region=None,
+    include_mobile_ridgeback=True,
+    static_cluster=None,
+):
     rng = seed_or_rng if isinstance(seed_or_rng, random.Random) else random.Random(seed_or_rng)
     static_walls = [
         (item.name, make_obb(item.center[0], item.center[1], item.bbox, item.yaw))
@@ -332,14 +405,23 @@ def randomize_one_room(seed_or_rng, table_object_names=TABLE_OBJECT_NAMES):
     group = None
     layout_name = None
     for _ in range(C.TABLE_GROUP_MAX_TRIES * 2):
-        candidate, candidate_layout = _sample_group(rng)
+        candidate, candidate_layout = _sample_group(
+            rng,
+            include_mobile_ridgeback=include_mobile_ridgeback,
+            static_cluster=static_cluster,
+        )
         if _valid_group(candidate, obstacles, boundaries):
             group, layout_name = candidate, candidate_layout
             break
     if group is None:
         raise AssertionError("could not place table/robot/Ridgeback group")
     tabletop = _place_tabletop(
-        rng, group["packing_table"], boundaries, table_object_names
+        rng,
+        group["packing_table"],
+        boundaries,
+        table_object_names,
+        table_prop_meta_overrides,
+        tabletop_spawn_region,
     )
     return {
         "layout": layout_name,
@@ -386,18 +468,26 @@ def randomize_fixed_table_room(seed_or_rng):
     }
 
 
-def respawn_target(room, rng):
+def respawn_target(room, rng, table_prop_meta_overrides=None, tabletop_spawn_region=None):
     occupied = [
         placement["box"] for name, placement in room["tabletop"].items() if name != "object"
     ]
     occupied.extend(make_obb(area.center[0], area.center[1], area.bbox, area.yaw) for area in C.TABLE_RESERVED_AREAS)
-    meta = C.TABLE_PROP_META["object"]
+    table_prop_meta = dict(C.TABLE_PROP_META)
+    if table_prop_meta_overrides:
+        table_prop_meta.update(table_prop_meta_overrides)
+    meta = table_prop_meta["object"]
     table = room["group"]["packing_table"]
     for _ in range(300):
-        lx, ly = rng.uniform(C.DESK_LOCAL_X_MIN, C.DESK_LOCAL_X_MAX), rng.uniform(C.DESK_LOCAL_Y_MIN, C.DESK_LOCAL_Y_MAX)
+        if tabletop_spawn_region is None:
+            x_min, x_max = C.DESK_LOCAL_X_MIN, C.DESK_LOCAL_X_MAX
+            y_min, y_max = C.DESK_LOCAL_Y_MIN, C.DESK_LOCAL_Y_MAX
+        else:
+            x_min, x_max, y_min, y_max = tabletop_spawn_region
+        lx, ly = rng.uniform(x_min, x_max), rng.uniform(y_min, y_max)
         yaw = rng.uniform(0.0, 2.0 * math.pi)
         candidate = make_obb(lx, ly, meta.bbox, yaw)
-        if not _inside_tabletop(candidate) or obb_overlap_any(candidate, occupied, margin=C.DESK_OBJECT_MARGIN):
+        if not _inside_tabletop(candidate, tabletop_spawn_region) or obb_overlap_any(candidate, occupied, margin=C.DESK_OBJECT_MARGIN):
             continue
         wx, wy = offset_from_yaw(table[0], table[1], table[4], lx, ly)
         room["tabletop"]["object"] = {
@@ -409,7 +499,7 @@ def respawn_target(room, rng):
     raise AssertionError("target respawn did not find a table pose")
 
 
-def _assert_valid(room, seed):
+def _assert_valid(room, seed, tabletop_spawn_region=None):
     obstacles = [record["box"] for record in room["walls"] if record["box"] is not None]
     obstacles.extend(box for _, box in room["static_walls"])
     for name, box in room["group"].items():
@@ -420,7 +510,7 @@ def _assert_valid(room, seed):
     local_boxes = []
     for name, placement in room["tabletop"].items():
         box = placement["box"]
-        assert _inside_tabletop(box), f"seed {seed}: {name} outside tabletop"
+        assert _inside_tabletop(box, tabletop_spawn_region), f"seed {seed}: {name} outside tabletop"
         for area in C.TABLE_RESERVED_AREAS:
             reserved = make_obb(area.center[0], area.center[1], area.bbox, area.yaw)
             assert not obb_overlap(box, reserved, margin=C.DESK_OBJECT_MARGIN), f"seed {seed}: {name} overlaps reserved area"
@@ -446,11 +536,50 @@ def run_geometry_tests(layout_count=1000):
             C.TABLE_FALLBACK_Y,
         ), f"seed {seed}: fixed teleoperation table moved"
 
-        redblock_room = randomize_one_room(
-            0xB10C0 + seed, REDBLOCK_TABLE_OBJECT_NAMES
+        medicine_bottle_room = randomize_one_room(
+            0xB10C0 + seed,
+            MEDICINE_BOTTLE_TABLE_OBJECT_NAMES,
+            MEDICINE_BOTTLE_TABLE_PROP_META_OVERRIDES,
+            tabletop_spawn_region=MEDICINE_BOTTLE_SPAWN_REGION,
+            include_mobile_ridgeback=False,
+            static_cluster=STATIC_LOGISTICS_CLUSTER,
         )
-        _assert_valid(redblock_room, f"redblock-{seed}")
-        assert set(redblock_room["tabletop"]) == set(REDBLOCK_TABLE_OBJECT_NAMES)
+        _assert_valid(
+            medicine_bottle_room,
+            f"medicine-bottle-{seed}",
+            MEDICINE_BOTTLE_SPAWN_REGION,
+        )
+        assert set(medicine_bottle_room["tabletop"]) == set(MEDICINE_BOTTLE_TABLE_OBJECT_NAMES)
+        assert {"ridgeback_left", "ridgeback_right"} <= set(medicine_bottle_room["group"])
+        robot_box = medicine_bottle_room["group"]["robot"]
+        for name, (local_xy, yaw_offset, bbox) in STATIC_LOGISTICS_CLUSTER.items():
+            expected_xy = _robot_local_xy(robot_box[0], robot_box[1], robot_box[4], local_xy)
+            actual = medicine_bottle_room["group"][name]
+            assert math.dist(actual[:2], expected_xy) < 1.0e-9
+            assert abs(actual[4] - (robot_box[4] + yaw_offset)) < 1.0e-9
+            ridgeback_lateral_half_extent = (
+                abs(math.sin(yaw_offset)) * bbox.half_w
+                + abs(math.cos(yaw_offset)) * bbox.half_d
+            )
+            leg_gap = (
+                abs(local_xy[1])
+                - C.ROBOT_BBOX.half_d
+                - ridgeback_lateral_half_extent
+            )
+            assert math.isclose(leg_gap, 0.10, abs_tol=1.0e-9)
+        before = medicine_bottle_room["tabletop"]["object"]["world"]
+        respawn_target(
+            medicine_bottle_room,
+            random.Random(0xB0771E + seed),
+            MEDICINE_BOTTLE_TABLE_PROP_META_OVERRIDES,
+            MEDICINE_BOTTLE_SPAWN_REGION,
+        )
+        _assert_valid(
+            medicine_bottle_room,
+            f"medicine-bottle-respawn-{seed}",
+            MEDICINE_BOTTLE_SPAWN_REGION,
+        )
+        assert medicine_bottle_room["tabletop"]["object"]["world"] != before
 
     same_a = randomize_one_room(123456)
     same_b = randomize_one_room(123456)

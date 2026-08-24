@@ -48,9 +48,9 @@ For a machine without a display, retain `--headless`; never replace it with
 python sim_main.py --device cpu --headless --meta_quest \
   --task Isaac-PickPlace-RedBlock-G129-Dex1-Joint
 
-# G1 29-DoF, Dex1 gripper, hospital scene
+# G1 29-DoF, Dex1 gripper, hospital medicine-bottle scene
 python sim_main.py --device cpu --headless --meta_quest \
-  --task Isaac-PickPlace-RedBlock-Hospital-G129-Dex1-Joint
+  --task Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint
 
 # G1 29-DoF, Dex3 hand
 python sim_main.py --device cpu --headless --meta_quest \
@@ -73,6 +73,13 @@ python sim_main.py --device cpu --headless --meta_quest \
 
 Do not also pass a hand flag or `--robot_type`; Quest mode derives those values
 from the task. It rejects an incompatible hand flag with a clear startup error.
+
+For the hospital medicine-bottle task in controller mode, the right thumbstick
+controls the simulation torso. Move it left/right to rotate toward the matching
+rear crate. Push it forward to lean over the crate and lower the hands; pull it
+back to return upright. Quest Y/B scene resets return the torso to centered and
+upright. Waist roll and every lower-body joint remain locked. Torso control is
+disabled automatically in hand-tracking or locomotion mode.
 
 ## Expected startup and troubleshooting
 

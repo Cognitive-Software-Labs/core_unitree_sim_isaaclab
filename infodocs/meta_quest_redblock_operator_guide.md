@@ -142,7 +142,7 @@ There are two browser-capable layers in the wider Unitree stack. In this reposit
 ### G1 29-DoF with Dex1
 
 - Standard: `Isaac-PickPlace-RedBlock-G129-Dex1-Joint`
-- Randomized hospital: `Isaac-PickPlace-RedBlock-Hospital-G129-Dex1-Joint`
+- Randomized hospital medicine bottle: `Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint`
 - XR profile: `--arm=G1_29 --ee=dex1`
 - Input: hand tracking or Quest controllers.
 
@@ -194,9 +194,9 @@ For a local Isaac Sim window, omit `--headless`. Headless still renders offscree
 python sim_main.py --device cuda:0 --headless --meta_quest \
   --task Isaac-PickPlace-RedBlock-G129-Dex1-Joint
 
-# G1 + Dex1, randomized hospital
+# G1 + Dex1, randomized hospital medicine bottle
 python sim_main.py --device cuda:0 --headless --meta_quest \
-  --task Isaac-PickPlace-RedBlock-Hospital-G129-Dex1-Joint
+  --task Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint
 
 # G1 + Dex3
 python sim_main.py --device cuda:0 --headless --meta_quest \
@@ -320,6 +320,9 @@ Optional recording metadata includes `--task-dir`, `--task-name`, `--task-goal`,
 - `camera_include = front_camera,left_wrist_camera,right_wrist_camera`.
 - `camera_write_interval = 1` unless explicitly supplied.
 - `TELEIMAGER_DISABLE_WEBRTC = 1`; ZMQ remains enabled.
+- For the hospital medicine-bottle profile, simulation-only torso control is
+  enabled: right-stick horizontal controls waist yaw and vertical controls
+  forward waist pitch. Waist roll and the lower body remain locked.
 
 <!-- PAGEBREAK -->
 
@@ -375,6 +378,12 @@ Optional recording metadata includes `--task-dir`, `--task-name`, `--task-goal`,
 
 The simulator defaults to a 100 Hz control loop while xr_teleoperate defaults to 30 Hz command production. The simulator consumes the most recent shared-memory command each control step; this rate mismatch is intentional.
 
+For the hospital medicine-bottle task in controller mode, use the right stick
+left/right to face either rear crate, then push it forward to lean over the
+crate and lower the held object. Pull back to return upright. Quest Y/B resets
+center both torso axes. The command is bounded inside the G1 joint limits and
+is automatically disabled in hand-tracking or locomotion mode.
+
 <!-- PAGEBREAK -->
 
 ## Network, ports, DDS topics, and shared memory
@@ -413,11 +422,11 @@ This split keeps network callbacks outside the real-time simulation loop: DDS wo
 
 The reset topic accepts categories through the String payload on `rt/reset_pose/cmd`:
 
-- Category `1`: object-only reset. Before full randomization is enabled, the red block uses the calibrated fixed-table spawn region. Afterward it respawns collision-free on the current randomized table; the rest of the layout is preserved.
+- Category `1`: object-only reset. Before full randomization is enabled, the medicine bottle uses the calibrated fixed-table spawn region. Afterward it respawns collision-free in the compact hand-reachable region on the current table; the rest of the layout is preserved.
 - Category `2` / Quest **B**: full-scene reset and table-randomization switch. The hospital Quest task starts with its table fixed at the calibrated location. Pressing B enables table-group randomization for the remainder of the session, then restores defaults, randomizes walls/furniture and the robot/table group, and places the target/tabletop objects.
 - Category `3` / Quest **Y**: fixed-table room reset. It restores defaults, returns the table-randomization switch to fixed mode, keeps the table at its authored anchor, and scrambles wall furniture plus tabletop objects around that fixed workspace.
 
-The randomized hospital task stores per-environment geometry in the room layout state. Robot pose/yaw, packing-table pose/yaw, target table-local pose, Ridgeback waiting/staging/delivery poses, selected wall layout, and tabletop placements share that source of truth. Teleoperation resets and Ridgeback assistance therefore follow the current layout instead of fixed world coordinates.
+The randomized hospital task stores per-environment geometry in the room layout state. Robot pose/yaw, packing-table pose/yaw, target table-local pose, both static Ridgeback poses, selected wall layout, and tabletop placements share that source of truth. Teleoperation resets therefore follow the current layout instead of fixed world coordinates.
 
 ### Manual reset diagnostics
 
@@ -432,9 +441,9 @@ For production Quest operation, prefer xr_teleoperate's normal simulated reset/r
 
 ### What to observe after a full hospital reset
 
-- G1, the packing table, and Ridgeback move as one validated randomized group.
-- Ridgeback returns to the randomized waiting pose behind G1 in robot-local coordinates.
-- The red block and hospital props remain within the current table surface and out of reserved areas.
+- G1, the packing table, and both static crate-carrying Ridgebacks move as one validated randomized group.
+- The two Ridgebacks remain at fixed mirrored positions to G1 and their crates remain parented to their bases.
+- The prescription target and three primitive-collider NVIDIA Hospital bottles remain in the compact hand-reachable tabletop region and out of reserved areas.
 - Camera streams continue without a duplicate-reset startup stall.
 - The assistant detects left/right hands in robot-local coordinates and delivers/returns relative to the current robot yaw.
 
@@ -461,8 +470,8 @@ For production Quest operation, prefer xr_teleoperate's normal simulated reset/r
 1. Move the head slowly and confirm the Vuer presentation remains responsive.
 2. Move one arm at a time and verify correct left/right mapping.
 3. Open/close each Dex1, Dex3, or Inspire end effector.
-4. Approach the red block without contact and verify camera latency remains controllable.
-5. Perform one object-only reset; confirm the block returns to the current table.
+4. Approach the medicine bottle without contact and verify camera latency remains controllable.
+5. Perform one object-only reset; confirm the bottle returns to the current table.
 6. Perform one full reset; for the hospital task confirm the complete group changes to a valid layout.
 7. Execute one left-hand and one right-hand pick/place attempt.
 8. For Ridgeback-enabled operation, verify staging, selected-hand delivery, basket success, and return.
@@ -565,7 +574,7 @@ The randomized hospital validation covers 1,000 deterministic layouts, room/furn
 ```bash
 cd /path/to/core_unitree_sim_isaaclab
 python sim_main.py --device cuda:0 --headless --meta_quest \
-  --task Isaac-PickPlace-RedBlock-Hospital-G129-Dex1-Joint
+  --task Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint
 ```
 
 ### Terminal 2 — XR host

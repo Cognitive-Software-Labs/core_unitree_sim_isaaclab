@@ -12,6 +12,8 @@ from tools.meta_quest import (
     MetaQuestConfigurationError,
     configure_meta_quest,
 )
+from tools.camera_optics import HOSPITAL_FRONT_CAMERA_OPTICS
+from tools.data_convert import convert_to_gripper_range, convert_to_joint_range
 from tools.teleimager_compat import configure_camera_transports
 
 
@@ -35,6 +37,20 @@ def _args(task: str, **overrides):
 
 
 class MetaQuestRedBlockTests(unittest.TestCase):
+    def test_dex1_dds_conversion_reaches_the_validated_full_stroke(self):
+        self.assertAlmostEqual(convert_to_joint_range(5.4), -0.02)
+        self.assertAlmostEqual(convert_to_joint_range(0.0), 0.0245)
+        self.assertAlmostEqual(convert_to_gripper_range(-0.02), 5.4)
+        self.assertAlmostEqual(convert_to_gripper_range(0.0245), 0.0)
+
+    def test_dds_gripper_targets_compensate_the_action_default_offset(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "action_provider/action_provider_dds.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("self._gripper_default_offsets", source)
+        self.assertIn("gp_vals = gp_vals - self._gripper_default_offsets", source)
+
     def test_all_registered_redblock_tasks_have_profiles(self):
         repo_root = Path(__file__).resolve().parents[1]
         registered = set()
@@ -43,7 +59,10 @@ class MetaQuestRedBlockTests(unittest.TestCase):
             task_ids = [
                 task_id
                 for task_id in re.findall(r'id\s*=\s*["\']([^"\']+)["\']', source)
-                if "redblock" in task_id.lower()
+                if any(
+                    token in task_id.lower()
+                    for token in ("redblock", "medicinebottle")
+                )
             ]
             registered.update(task_ids)
             if task_ids:
@@ -81,6 +100,17 @@ class MetaQuestRedBlockTests(unittest.TestCase):
                 self.assertEqual(args.camera_include, CAMERA_SENSOR_NAMES)
                 self.assertEqual(args.camera_write_interval, 1)
                 self.assertEqual(environ["TELEIMAGER_DISABLE_WEBRTC"], "1")
+                if expected.quest_view_preset is None:
+                    self.assertNotIn("TELEIMAGER_HEAD_QUEST_VIEW_PRESET", environ)
+                else:
+                    self.assertEqual(
+                        environ["TELEIMAGER_HEAD_QUEST_VIEW_PRESET"],
+                        expected.quest_view_preset,
+                    )
+                self.assertEqual(
+                    environ.get("TELEIMAGER_ENABLE_SIM_TORSO_CONTROL") == "1",
+                    expected.sim_torso_control,
+                )
 
     def test_no_render_is_rejected_but_headless_is_not(self):
         task = "Isaac-PickPlace-RedBlock-G129-Dex1-Joint"
@@ -126,12 +156,85 @@ class MetaQuestRedBlockTests(unittest.TestCase):
         self.assertTrue(all(camera["enable_zmq"] for camera in configured.values()))
         self.assertTrue(all(not camera["enable_webrtc"] for camera in configured.values()))
 
+    def test_hospital_profile_adds_arm_panel_and_sim_torso_control(self):
+        task = "Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint"
+        environ = {}
+        configure_meta_quest(_args(task), environ)
+        config = {
+            "head_camera": {"enable_zmq": True, "enable_webrtc": True},
+            "left_wrist_camera": {"enable_zmq": True, "enable_webrtc": True},
+            "right_wrist_camera": {"enable_zmq": True, "enable_webrtc": True},
+        }
+
+        configured = configure_camera_transports(config, environ)
+
+        self.assertEqual(
+            configured["head_camera"]["quest_view"],
+            {
+                "preset": "arm_work_panel",
+                "horizontal_fov_degrees": 82.0,
+                "distance": 2.0,
+                "vertical_offset": -0.10,
+            },
+        )
+        self.assertEqual(
+            configured["head_camera"]["sim_torso_control"],
+            {
+                "enabled": True,
+                "deadzone": 0.15,
+                "max_yaw_speed_rad_s": 0.80,
+                "max_yaw_angle_rad": 2.20,
+                "max_pitch_speed_rad_s": 0.35,
+                "min_pitch_angle_rad": 0.0,
+                "max_pitch_angle_rad": 0.45,
+            },
+        )
+
+    def test_hospital_front_camera_optics_match_the_saved_isaac_view(self):
+        optics = HOSPITAL_FRONT_CAMERA_OPTICS
+        self.assertEqual(
+            (
+                optics.focal_length,
+                optics.focus_distance,
+                optics.horizontal_aperture,
+                optics.width,
+                optics.height,
+            ),
+            (4.5, 400.0, 10.0, 640, 480),
+        )
+        self.assertAlmostEqual(optics.horizontal_fov_degrees, 96.0255750084)
+        self.assertAlmostEqual(optics.vertical_fov_degrees, 79.6111421845)
+
+    def test_hospital_torso_yaw_and_pitch_are_unlocked_and_mapped_from_dds(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        task_source = (
+            repo_root
+            / "tasks/g1_tasks/pickplace_medicine_bottle_hospital_g1_29dof_dex1"
+            / "pickplace_medicine_bottle_hospital_g1_29dof_dex1_joint_env_cfg.py"
+        ).read_text(encoding="utf-8")
+        provider_source = (
+            repo_root / "action_provider/action_provider_dds.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'joint_names_expr=["waist_yaw_joint", "waist_pitch_joint"]',
+            task_source,
+        )
+        self.assertIn('joint_names_expr=["waist_roll_joint"]', task_source)
+        self.assertIn('self._waist_yaw_source_index = 12', provider_source)
+        self.assertIn('self._waist_pitch_source_index = 14', provider_source)
+        self.assertIn(
+            'full_action[self._waist_pitch_target_index] = '
+            'self._positions_buf[self._waist_pitch_source_index]',
+            provider_source,
+        )
+
     def test_hospital_full_reset_enables_table_randomization(self):
         repo_root = Path(__file__).resolve().parents[1]
         config_path = (
             repo_root
-            / "tasks/g1_tasks/pickplace_redblock_hospital_g1_29dof_dex1"
-            / "pickplace_redblock_hospital_g1_29dof_dex1_joint_env_cfg.py"
+            / "tasks/g1_tasks/pickplace_medicine_bottle_hospital_g1_29dof_dex1"
+            / "pickplace_medicine_bottle_hospital_g1_29dof_dex1_joint_env_cfg.py"
         )
         source = config_path.read_text(encoding="utf-8")
 
@@ -145,16 +248,17 @@ class MetaQuestRedBlockTests(unittest.TestCase):
         )
         self.assertRegex(
             source,
-            r'def reset_hospital_target[\s\S]+reset_target_on_current_table',
+            r'def reset_hospital_tabletop_props[\s\S]+for asset_name in '
+            r'MEDICINE_BOTTLE_TABLE_PROP_NAMES[\s\S]+reset_target_on_current_table',
         )
 
     def test_quest_fixed_table_room_reset_is_routed_to_both_hospital_tasks(self):
         repo_root = Path(__file__).resolve().parents[1]
         sim_source = (repo_root / "sim_main.py").read_text(encoding="utf-8")
-        redblock_source = (
+        medicine_bottle_source = (
             repo_root
-            / "tasks/g1_tasks/pickplace_redblock_hospital_g1_29dof_dex1"
-            / "pickplace_redblock_hospital_g1_29dof_dex1_joint_env_cfg.py"
+            / "tasks/g1_tasks/pickplace_medicine_bottle_hospital_g1_29dof_dex1"
+            / "pickplace_medicine_bottle_hospital_g1_29dof_dex1_joint_env_cfg.py"
         ).read_text(encoding="utf-8")
         ridgeback_source = (
             repo_root
@@ -166,13 +270,26 @@ class MetaQuestRedBlockTests(unittest.TestCase):
             sim_source,
             r"reset_category == '3'[\s\S]+reset_room_fixed_table_self",
         )
-        for source in (redblock_source, ridgeback_source):
+        for source in (medicine_bottle_source, ridgeback_source):
             self.assertIn('"reset_room_fixed_table_self"', source)
             self.assertIn("randomize_table_position=False", source)
         self.assertIn(
             "env._teleop_randomize_table_position = False",
-            redblock_source,
+            medicine_bottle_source,
         )
+
+    def test_hospital_success_notifies_quest_torso_recenter(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        sim_source = (repo_root / "sim_main.py").read_text(encoding="utf-8")
+        goal_source = (
+            repo_root
+            / "tasks/g1_tasks/pickplace_medicine_bottle_hospital_g1_29dof_dex1"
+            / "mdp/container_goal.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"rt/isaaclab/hospital_success"', sim_source)
+        self.assertIn('String_(data="reset_like_y")', sim_source)
+        self.assertIn("env._hospital_success_reset_pending = True", goal_source)
+        self.assertIn("env._teleop_randomize_table_position = False", goal_source)
 
 
 if __name__ == "__main__":

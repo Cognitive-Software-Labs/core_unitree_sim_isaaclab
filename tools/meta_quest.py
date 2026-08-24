@@ -1,4 +1,4 @@
-"""Meta Quest launch profiles for camera-enabled red-block teleoperation."""
+"""Meta Quest launch profiles for camera-enabled manipulation tasks."""
 
 from __future__ import annotations
 
@@ -15,14 +15,19 @@ class MetaQuestTaskProfile:
 
     robot_type: str
     hand_flag: str
+    quest_view_preset: str | None = None
+    sim_torso_control: bool = False
 
 
 # Keep this list explicit.  A task is only added after verifying that its scene
 # contains the head and both wrist cameras consumed by xr_teleoperate.
 META_QUEST_REDBLOCK_PROFILES: dict[str, MetaQuestTaskProfile] = {
     "Isaac-PickPlace-RedBlock-G129-Dex1-Joint": MetaQuestTaskProfile("g129", "enable_dex1_dds"),
-    "Isaac-PickPlace-RedBlock-Hospital-G129-Dex1-Joint": MetaQuestTaskProfile(
-        "g129", "enable_dex1_dds"
+    "Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint": MetaQuestTaskProfile(
+        "g129",
+        "enable_dex1_dds",
+        quest_view_preset="arm_work_panel",
+        sim_torso_control=True,
     ),
     "Isaac-PickPlace-RedBlock-G129-Dex3-Joint": MetaQuestTaskProfile("g129", "enable_dex3_dds"),
     "Isaac-PickPlace-RedBlock-G129-Inspire-Joint": MetaQuestTaskProfile(
@@ -97,4 +102,12 @@ def configure_meta_quest(args, environ: MutableMapping[str, str]) -> MetaQuestTa
     # xr_teleoperate receives these feeds through ZMQ (55555-55557).  Avoid
     # launching the optional certificate-backed WebRTC servers as well.
     environ["TELEIMAGER_DISABLE_WEBRTC"] = "1"
+    if profile.quest_view_preset is not None:
+        environ["TELEIMAGER_HEAD_QUEST_VIEW_PRESET"] = profile.quest_view_preset
+    else:
+        environ.pop("TELEIMAGER_HEAD_QUEST_VIEW_PRESET", None)
+    if profile.sim_torso_control:
+        environ["TELEIMAGER_ENABLE_SIM_TORSO_CONTROL"] = "1"
+    else:
+        environ.pop("TELEIMAGER_ENABLE_SIM_TORSO_CONTROL", None)
     return profile

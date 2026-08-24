@@ -134,6 +134,8 @@ from layeredcontrol.robot_control_system import (
 )
 
 from dds.reset_pose_dds import *
+from unitree_sdk2py.core.channel import ChannelPublisher
+from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
 import tasks
 from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
@@ -420,6 +422,7 @@ def main():
     
     # create controller
 
+    hospital_success_publisher = None
     if not args_cli.replay_data:
         print("========= create image server =========")
         try:
@@ -431,6 +434,11 @@ def main():
         print("========= create dds =========")
         try:
             reset_pose_dds,sim_state_dds,dds_manager = create_dds_objects(args_cli,env)
+            if args_cli.task == "Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint":
+                hospital_success_publisher = ChannelPublisher(
+                    "rt/isaaclab/hospital_success", String_
+                )
+                hospital_success_publisher.Init()
         except Exception as e:
             print(f"Failed to create dds: {e}")
             return
@@ -601,6 +609,16 @@ def main():
                 
                 # execute control step (in main thread, support rendering)
                 controller.step()
+                if hospital_success_publisher is not None and getattr(
+                    env, "_hospital_success_reset_pending", False
+                ):
+                    env._hospital_success_reset_pending = False
+                    hospital_success_publisher.Write(String_(data="reset_like_y"))
+                    print(
+                        "[hospital success] fixed-table room reset complete; "
+                        "requested Quest torso recenter",
+                        flush=True,
+                    )
                 if args_cli.max_steps is not None and loop_count >= max(1, args_cli.max_steps):
                     print(f"[sim] reached --max_steps={args_cli.max_steps}; stopping cleanly")
                     break
