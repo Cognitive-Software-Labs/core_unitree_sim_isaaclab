@@ -13,6 +13,62 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from tasks.common_config import   CameraBaseCfg  # isort: skip
 import os
 project_root = os.environ.get("PROJECT_ROOT")
+
+
+def hospital_medicine_bottle_cfg(
+    prim_path: str = "/World/envs/env_.*/Object",
+    init_pos: tuple[float, float, float] = (-0.68, 0.40, 0.86),
+) -> RigidObjectCfg:
+    """Build the shared prescription-bottle config without class-field lookup."""
+    return RigidObjectCfg(
+        prim_path=prim_path,
+        # Measured PackingTable top is z~=0.794 after its -0.2 world offset.
+        # Bottle bottom is -0.055, so z=0.86 leaves 11 mm spawn clearance.
+        init_state=RigidObjectCfg.InitialStateCfg(
+            # Leftmost item in the front 1x4 task row.  The complete row stays
+            # away from the table's built-in container on the right.
+            pos=init_pos,
+            rot=[1, 0, 0, 0],
+        ),
+        spawn=UsdFileCfg(
+            usd_path=f"{project_root}/assets/objects/hospital_medicine_bottle.usda",
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                linear_damping=1.5,
+                angular_damping=3.0,
+                max_linear_velocity=5.0,
+                max_angular_velocity=10.0,
+                max_depenetration_velocity=0.25,
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.12),
+        ),
+    )
+
+
+def hospital_hand_sanitizer_cfg(
+    prim_path: str = "/World/envs/env_.*/HandSanitizer",
+    init_pos: tuple[float, float, float] = (0.07, 0.40, 0.875),
+) -> RigidObjectCfg:
+    """Build the shared graspable sanitizer config."""
+    return RigidObjectCfg(
+        prim_path=prim_path,
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=init_pos,
+            rot=(1.0, 0.0, 0.0, 0.0),
+        ),
+        spawn=UsdFileCfg(
+            usd_path=f"{project_root}/assets/objects/hospital_hand_sanitizer.usda",
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                linear_damping=1.5,
+                angular_damping=3.0,
+                max_linear_velocity=5.0,
+                max_angular_velocity=10.0,
+                max_depenetration_velocity=0.25,
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.18),
+        ),
+    )
+
+
 @configclass
 class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive scene configuration class
     """object table scene configuration class
@@ -92,28 +148,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
         ),
     )
     # Object: hospital prescription bottle
-    object = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/Object",
-        # Measured PackingTable top is z~=0.794 after its -0.2 world offset.
-        # Bottle bottom is -0.055, so z=0.86 leaves 11 mm spawn clearance.
-        init_state=RigidObjectCfg.InitialStateCfg(
-            # Leftmost item in the front 1x4 task row.  The complete row stays
-            # away from the table's built-in container on the right.
-            pos=[-0.68, 0.40, 0.86],
-            rot=[1, 0, 0, 0],
-        ),
-        spawn=UsdFileCfg(
-            usd_path=f"{project_root}/assets/objects/hospital_medicine_bottle.usda",
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                linear_damping=1.5,
-                angular_damping=3.0,
-                max_linear_velocity=5.0,
-                max_angular_velocity=10.0,
-                max_depenetration_velocity=0.25,
-            ),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.12),
-        ),
-    )
+    object = hospital_medicine_bottle_cfg()
     # Collision-only support plane.  The hospital USD floor is visual geometry
     # and does not provide a reliable physics collider for a free-root G1.
     ground = AssetBaseCfg(

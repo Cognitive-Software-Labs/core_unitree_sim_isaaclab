@@ -17,10 +17,12 @@ import torch
 import gymnasium as gym
 from pathlib import Path
 
+from tools.meta_quest import MetaQuestConfigurationError, configure_meta_quest
+
 # Isaac Lab AppLauncher
 from isaaclab.app import AppLauncher
 
-from teleimager.image_server import run_isaacsim_server
+from tools.teleimager_compat import run_isaacsim_server
 from dds.dds_create import create_dds_objects,create_dds_objects_replay
 # add command line arguments
 parser = argparse.ArgumentParser(description="Unitree Simulation")
@@ -34,7 +36,18 @@ parser.add_argument("--robot_type", type=str, default="g129", help="robot type")
 parser.add_argument("--enable_dex1_dds", action="store_true", help="enable gripper DDS")
 parser.add_argument("--enable_dex3_dds", action="store_true", help="enable dexterous hand DDS")
 parser.add_argument("--enable_inspire_dds", action="store_true", help="enable inspire hand DDS")
+parser.add_argument(
+    "--meta_quest",
+    action="store_true",
+    help="configure a supported red-block task for live Meta Quest teleoperation via xr_teleoperate",
+)
 parser.add_argument("--stats_interval", type=float, default=10.0, help="statistics print interval (seconds)")
+parser.add_argument(
+    "--max_steps",
+    type=int,
+    default=None,
+    help="stop cleanly after this many control steps (useful for startup smoke tests)",
+)
 
 parser.add_argument("--file_path", type=str, default="/home/unitree/Code/xr_teleoperate/teleop/utils/data", help="file path (when action_source=file)")
 parser.add_argument("--generate_data_dir", type=str, default="./data", help="save data dir")
@@ -80,6 +93,16 @@ parser.add_argument("--disable_auto_reset", action="store_true", default=False, 
 # add AppLauncher parameters
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+try:
+    meta_quest_profile = configure_meta_quest(args_cli, os.environ)
+except MetaQuestConfigurationError as exc:
+    parser.error(str(exc))
+
+if meta_quest_profile is not None:
+    print(
+        "[Meta Quest] enabled cameras, ZMQ video, "
+        f"robot={meta_quest_profile.robot_type}, hand=--{meta_quest_profile.hand_flag}"
+    )
 if args_cli.no_render:
     os.environ["LIVESTREAM"] = str(args_cli.livestream_type)
     os.environ["PUBLIC_IP"] = args_cli.public_ip
@@ -111,6 +134,8 @@ from layeredcontrol.robot_control_system import (
 )
 
 from dds.reset_pose_dds import *
+from unitree_sdk2py.core.channel import ChannelPublisher
+from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
 import tasks
 from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
@@ -397,6 +422,7 @@ def main():
     
     # create controller
 
+    hospital_success_publisher = None
     if not args_cli.replay_data:
         print("========= create image server =========")
         try:
@@ -408,6 +434,11 @@ def main():
         print("========= create dds =========")
         try:
             reset_pose_dds,sim_state_dds,dds_manager = create_dds_objects(args_cli,env)
+            if args_cli.task == "Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint":
+                hospital_success_publisher = ChannelPublisher(
+                    "rt/isaaclab/hospital_success", String_
+                )
+                hospital_success_publisher.Init()
         except Exception as e:
             print(f"Failed to create dds: {e}")
             return
@@ -526,6 +557,10 @@ def main():
                                 print("reset all")
                                 env_cfg.event_manager.trigger("reset_all_self", env)
                                 reset_pose_dds.write_reset_pose_command(-1)
+                            elif reset_category == '3':
+                                print("reset room with fixed table")
+                                env_cfg.event_manager.trigger("reset_room_fixed_table_self", env)
+                                reset_pose_dds.write_reset_pose_command(-1)
                         except Exception as e:
                             print(f"Failed to write reset pose command: {e}")
                             raise e
@@ -574,6 +609,19 @@ def main():
                 
                 # execute control step (in main thread, support rendering)
                 controller.step()
+                if hospital_success_publisher is not None and getattr(
+                    env, "_hospital_success_reset_pending", False
+                ):
+                    env._hospital_success_reset_pending = False
+                    hospital_success_publisher.Write(String_(data="reset_like_y"))
+                    print(
+                        "[hospital success] fixed-table room reset complete; "
+                        "requested Quest torso recenter",
+                        flush=True,
+                    )
+                if args_cli.max_steps is not None and loop_count >= max(1, args_cli.max_steps):
+                    print(f"[sim] reached --max_steps={args_cli.max_steps}; stopping cleanly")
+                    break
 
                 # print statistics and loop frequency periodically
                 if current_time - last_stats_time >= args_cli.stats_interval:

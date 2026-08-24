@@ -9,7 +9,11 @@ import torch
 import isaaclab.envs.mdp as base_mdp
 from tasks.common_event.event_manager import SimpleEvent, SimpleEventManager
 
-from .room_events import randomize_pickplace_room_layout, randomize_wall_props_layout
+from .room_events import (
+    randomize_pickplace_room_layout,
+    randomize_wall_props_layout,
+    reset_target_on_current_table,
+)
 
 WALL_PROP_NAMES = [
     "medical_cabinet",
@@ -28,6 +32,12 @@ TABLE_PROP_NAMES = [
     "yellow_cube",
 ]
 
+HOSPITAL_TABLE_PROP_NAMES = [
+    "hand_sanitizer",
+    "gauze_box",
+    "specimen_cup",
+]
+
 
 def randomize_room_for_all_envs(env) -> None:
     """Randomize the pick-and-place room layout for every environment instance."""
@@ -37,6 +47,14 @@ def randomize_room_for_all_envs(env) -> None:
         wall_prop_names=WALL_PROP_NAMES,
         table_prop_names=TABLE_PROP_NAMES,
         min_table_objects=len(TABLE_PROP_NAMES),
+    )
+
+
+def reset_target_for_all_envs(env) -> None:
+    """Reset only the target, preserving the current randomized room layout."""
+    reset_target_on_current_table(
+        env,
+        torch.arange(env.num_envs, device=env.device),
     )
 
 
@@ -63,5 +81,5 @@ def reset_all_then_randomize_wall_props(env) -> None:
 def register_randomized_room_reset_events(cfg) -> None:
     """Install DDS/manual reset callbacks that mirror the native reset randomizer."""
     cfg.event_manager = SimpleEventManager()
-    cfg.event_manager.register("reset_object_self", SimpleEvent(func=randomize_room_for_all_envs))
+    cfg.event_manager.register("reset_object_self", SimpleEvent(func=reset_target_for_all_envs))
     cfg.event_manager.register("reset_all_self", SimpleEvent(func=reset_all_then_randomize_room))
