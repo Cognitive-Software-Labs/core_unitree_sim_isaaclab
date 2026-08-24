@@ -297,12 +297,35 @@ tools/            Data, camera, Quest, and validation utilities
 sim_main.py       Simulator entry point
 ```
 
-## Related documentation
+## Detailed guides
+
+### Installation and first launch
+
+- [Isaac Sim 5.1 installation notes](doc/isaacsim5.1_install.md)
+- [Isaac Sim 5.0 installation notes](doc/isaacsim5.0_install.md)
+- [Isaac Sim 4.5 installation notes](doc/isaacsim4.5_install.md)
+- [Chinese installation guides](README_zh-CN.md)
+
+### Hospital tasks and teleoperation
+
+- [Hospital two-pill task details](tasks/g1_tasks/pickplace_medicine_bottle_hospital_g1_29dof_dex1/README.md)
+- [Hospital teleoperation integration and validation](infodocs/hospital_teleoperation_integration.md)
+- [Meta Quest teleoperation setup](infodocs/meta_quest_redblock_teleoperation.md)
+- [Meta Quest operator guide](infodocs/meta_quest_redblock_operator_guide.md)
+- [Project walkthrough](infodocs/walkthrough.md)
+
+### Randomized room implementation
+
+- [Room-randomizer demo](isaac-projects/room_randomizer_lab/DEMO.md)
+- [Execution flow](isaac-projects/room_randomizer_lab/execution_flow.md)
+- [Project architecture](isaac-projects/room_randomizer_lab/project_architecture.md)
+- [Randomization algorithm](isaac-projects/room_randomizer_lab/randomization_algorithm.md)
+- [Migration and integration guide](isaac-projects/room_randomizer_lab/transition_guide.md)
+
+### External references
 
 - [NVIDIA Isaac Lab pip installation](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/pip_installation.html)
 - [Unitree SDK2 Python](https://github.com/unitreerobotics/unitree_sdk2_python)
-- [Hospital teleoperation integration notes](infodocs/hospital_teleoperation_integration.md)
-- [Hospital task details](tasks/g1_tasks/pickplace_medicine_bottle_hospital_g1_29dof_dex1/README.md)
 
 ## License
 
