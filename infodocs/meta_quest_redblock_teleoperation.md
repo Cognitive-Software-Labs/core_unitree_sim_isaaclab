@@ -77,7 +77,9 @@ from the task. It rejects an incompatible hand flag with a clear startup error.
 For the hospital medicine-bottle task in controller mode, the right thumbstick
 controls the simulation torso. Move it left/right to rotate toward the matching
 rear crate. Push it forward to lean over the crate and lower the hands; pull it
-back to return upright. Quest Y/B scene resets return the torso to centered and
+back to return upright. Quest X starts/stops recording from every available G1
+camera into `~/Desktop/G1_Camera_Recordings`; A moves the Ridgeback to its next arc point; Y/B
+scene resets return the torso to centered and
 upright. Waist roll and every lower-body joint remain locked. Torso control is
 disabled automatically in hand-tracking or locomotion mode.
 

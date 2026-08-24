@@ -4,21 +4,40 @@
 
 from __future__ import annotations
 
+import os
+
 import torch
 
+from tools.medical_object_catalog import (
+    MEDICAL_OBJECT_SPECS,
+    OBJECT_ROLES_ENV,
+    ROLE_IMPORTANT,
+    parse_roles,
+)
 
-PILL_BOTTLE_NAMES = ("pill_bottle_t", "pill_bottle_v")
-RIDGEBACK_NAMES = ("ridgeback_left", "ridgeback_right")
+MEDICAL_OBJECT_ROLES = parse_roles(os.environ.get(OBJECT_ROLES_ENV))
+IMPORTANT_OBJECT_SPECS = tuple(
+    spec
+    for spec in MEDICAL_OBJECT_SPECS
+    if MEDICAL_OBJECT_ROLES[spec.scene_name] == ROLE_IMPORTANT
+)
+IMPORTANT_OBJECT_NAMES = tuple(spec.scene_name for spec in IMPORTANT_OBJECT_SPECS)
+IMPORTANT_OBJECT_LOCAL_CENTERS = tuple(
+    spec.center_offset for spec in IMPORTANT_OBJECT_SPECS
+)
+# Compatibility aliases for older callers; their contents now follow the GUI.
+PILL_BOTTLE_NAMES = IMPORTANT_OBJECT_NAMES
+RIDGEBACK_NAMES = ("ridgeback",)
 
-# The crates are collision children of the two kinematic Ridgeback roots.
-# Values are the local transforms captured in the authored hospital layout.
+# The crate is a collision child of the one kinematic Ridgeback root. Its
+# counter-transform preserves its G1/room-relative world frame after the
+# Ridgeback body is reversed.
 CRATE_LOCAL_POSITIONS = (
-    (0.22877, 0.00612, 0.28576),
-    (0.22877, -0.00612, 0.28576),
+    # Must match the raised crate's counter-transform after Ridgeback turns 180°.
+    (-0.22877, -0.00612, 0.43576),
 )
 CRATE_LOCAL_ORIENTATIONS = (
-    (0.7095584382, 0.0, 0.0, -0.7046465942),
-    (0.7095584382, 0.0, 0.0, 0.7046465942),
+    (0.7046465942, 0.0, 0.0, 0.7095584382),
 )
 
 # Measured source-mesh bounds are x=+/-0.224775, y=+/-0.167839,
@@ -27,12 +46,9 @@ CRATE_LOCAL_ORIENTATIONS = (
 CRATE_INTERIOR_HALF_EXTENTS_XY = (0.205, 0.148)
 CRATE_INTERIOR_Z_RANGE = (0.005, 0.183)
 
-# Both pill-bottle assets use a base-origin pivot. Test their geometric center,
-# not the base point, so tipped bottles are still classified correctly.
-PILL_BOTTLE_LOCAL_CENTERS = (
-    (0.0, 0.0, 0.0253035),
-    (0.0, 0.0, 0.0209020),
-)
+# Test each selected mesh at its measured geometric center rather than its
+# authored pivot, so tipped objects are still classified consistently.
+PILL_BOTTLE_LOCAL_CENTERS = IMPORTANT_OBJECT_LOCAL_CENTERS
 
 
 def quaternion_multiply(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
@@ -98,18 +114,18 @@ def points_in_oriented_crate(
     )
 
 
-def pill_bottles_contained(env) -> torch.Tensor:
-    """Return shape ``(num_envs, 2)`` flags for bottles in either rear crate."""
-    bottle_results = []
-    for bottle_name, center_offset in zip(
-        PILL_BOTTLE_NAMES, PILL_BOTTLE_LOCAL_CENTERS, strict=True
+def important_objects_contained(env) -> torch.Tensor:
+    """Return one Ridgeback-crate containment flag per important object."""
+    object_results = []
+    for object_name, center_offset in zip(
+        IMPORTANT_OBJECT_NAMES, IMPORTANT_OBJECT_LOCAL_CENTERS, strict=True
     ):
-        bottle = env.scene[bottle_name]
-        local_center = bottle.data.root_pos_w.new_tensor(center_offset).expand(
+        object_asset = env.scene[object_name]
+        local_center = object_asset.data.root_pos_w.new_tensor(center_offset).expand(
             env.num_envs, 3
         )
-        center_w = bottle.data.root_pos_w + quaternion_apply(
-            bottle.data.root_quat_w, local_center
+        center_w = object_asset.data.root_pos_w + quaternion_apply(
+            object_asset.data.root_quat_w, local_center
         )
 
         bin_results = []
@@ -129,14 +145,14 @@ def pill_bottles_contained(env) -> torch.Tensor:
                     crate_orientation,
                 )
             )
-        bottle_results.append(torch.stack(bin_results, dim=-1).any(dim=-1))
+        object_results.append(torch.stack(bin_results, dim=-1).any(dim=-1))
 
-    return torch.stack(bottle_results, dim=-1)
+    return torch.stack(object_results, dim=-1)
 
 
-def both_pill_bottles_contained(env) -> torch.Tensor:
-    """Terminate on success and request the same fixed-table reset as Quest Y."""
-    success = pill_bottles_contained(env).all(dim=-1)
+def all_important_objects_contained(env) -> torch.Tensor:
+    """Succeed when every GUI-important object is inside the Ridgeback crate."""
+    success = important_objects_contained(env).all(dim=-1)
     if bool(success.any().item()):
         # ManagerBasedRLEnv resets successful environments inside env.step().
         # Select the Y-button reset mode before that reset event runs, then let
@@ -146,15 +162,24 @@ def both_pill_bottles_contained(env) -> torch.Tensor:
     return success
 
 
+# Preserve the public names used by older task configs and scripts.
+pill_bottles_contained = important_objects_contained
+both_pill_bottles_contained = all_important_objects_contained
+
+
 __all__ = [
     "CRATE_INTERIOR_HALF_EXTENTS_XY",
     "CRATE_INTERIOR_Z_RANGE",
     "CRATE_LOCAL_ORIENTATIONS",
     "CRATE_LOCAL_POSITIONS",
+    "IMPORTANT_OBJECT_LOCAL_CENTERS",
+    "IMPORTANT_OBJECT_NAMES",
     "PILL_BOTTLE_LOCAL_CENTERS",
     "PILL_BOTTLE_NAMES",
     "RIDGEBACK_NAMES",
+    "all_important_objects_contained",
     "both_pill_bottles_contained",
+    "important_objects_contained",
     "pill_bottles_contained",
     "points_in_oriented_crate",
     "quaternion_apply",

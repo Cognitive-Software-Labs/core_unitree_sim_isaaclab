@@ -8,6 +8,9 @@ readonly XR_REPO="/home/vilmos/xr_teleoperate/teleop"
 readonly DEFAULT_SIM_IP="139.174.67.90"
 readonly DEFAULT_INTERFACE="eno2"
 readonly DEFAULT_TASK="Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint"
+readonly ROOM_USDA="$SIM_REPO/isaac-projects/new_base_room.usda"
+readonly MEDICAL_OBJECTS_USDA="${MEDICAL_OBJECTS_USDA:-/home/vilmos/isaac-sim/isaac-projects/new_base_room.usda}"
+readonly TABLE_OBJECT_SELECTOR="$SIM_REPO/tools/select_table_objects.py"
 
 usage() {
     cat <<'EOF'
@@ -25,6 +28,8 @@ Options:
   -h, --help            Show this help
 
 The Quest browser URL is printed after both terminals are opened.
+Before launch, a GUI reads every asset in the authored MedicalObjects scope
+and lets you exclude it or assign it an Important or Distractor role.
 EOF
 }
 
@@ -55,6 +60,7 @@ run_simulator() {
     local task="$2"
     local sim_gui="$3"
     local interface="$4"
+    local object_roles="$5"
     local -a render_args=(--headless)
 
     if [[ "$sim_gui" == "true" ]]; then
@@ -64,9 +70,11 @@ run_simulator() {
     activate_conda_env unitree_sim_env
     cd "$SIM_REPO"
     export UNITREE_DDS_NETWORK_INTERFACE="$interface"
+    export HOSPITAL_OBJECT_ROLES="$object_roles"
 
     printf 'Starting Meta Quest medicine-bottle simulator...\n'
     printf 'Task: %s\nDevice: %s\nDDS interface: %s\n\n' "$task" "$device" "$interface"
+    printf 'Medical-object roles: %s\n\n' "$object_roles"
 
     set +e
     python sim_main.py \
@@ -151,6 +159,9 @@ validate_installation() {
 
     [[ -f "$CONDA_SETUP" ]] || { printf 'Missing Conda setup: %s\n' "$CONDA_SETUP" >&2; exit 1; }
     [[ -f "$SIM_REPO/sim_main.py" ]] || { printf 'Missing simulator: %s\n' "$SIM_REPO" >&2; exit 1; }
+    [[ -f "$ROOM_USDA" ]] || { printf 'Missing room layer: %s\n' "$ROOM_USDA" >&2; exit 1; }
+    [[ -f "$MEDICAL_OBJECTS_USDA" ]] || { printf 'Missing MedicalObjects catalog layer: %s\n' "$MEDICAL_OBJECTS_USDA" >&2; exit 1; }
+    [[ -f "$TABLE_OBJECT_SELECTOR" ]] || { printf 'Missing table-object selector: %s\n' "$TABLE_OBJECT_SELECTOR" >&2; exit 1; }
     [[ -f "$XR_REPO/teleop_hand_and_arm.py" ]] || { printf 'Missing XR launcher: %s\n' "$XR_REPO" >&2; exit 1; }
     [[ -d "$SIM_REPO/assets" ]] || { printf 'Missing simulator assets. Run `. fetch_assets.sh` in %s.\n' "$SIM_REPO" >&2; exit 1; }
     [[ -f /home/vilmos/.config/xr_teleoperate/cert.pem ]] || { printf 'Missing Vuer TLS certificate.\n' >&2; exit 1; }
@@ -232,7 +243,9 @@ fi
 
 validate_installation "$interface" "$sim_ip"
 
-launch_terminal "Medicine Bottle - Isaac Simulator" __simulator "$device" "$task" "$sim_gui" "$interface"
+object_roles="$(python3 "$TABLE_OBJECT_SELECTOR" --usd "$MEDICAL_OBJECTS_USDA")"
+
+launch_terminal "Medicine Bottle - Isaac Simulator" __simulator "$device" "$task" "$sim_gui" "$interface" "$object_roles"
 launch_terminal "Medicine Bottle - Meta Quest Bridge" __xr_bridge "$sim_ip" "$interface" "$input_mode"
 
 printf 'Started the simulator and Quest bridge in two visible terminals.\n\n'
@@ -241,5 +254,6 @@ printf 'https://%s:8012/?ws=wss://%s:8012\n\n' "$sim_ip" "$sim_ip"
 printf 'After Vuer enters Virtual Reality, press r in the Quest Bridge terminal.\n'
 printf 'Left/right index trigger: hold to close/grasp; release to open/relax the matching Dex1 gripper.\n'
 printf 'Right stick: left/right turns the torso; forward leans toward a crate; back returns upright.\n'
+printf 'Quest X starts/stops G1 camera recording; A moves the Ridgeback to its next arc point; Y/B reset the scene and recenter the torso.\n'
 printf 'Quest Y/B scene resets also return the torso to center/upright.\n'
 printf 'Press q there to stop teleoperation, then Ctrl+C in the simulator terminal.\n'

@@ -285,7 +285,7 @@ https://XR_HOST_IP:8012/?ws=wss://XR_HOST_IP:8012
 7. Confirm that the robot's head-camera view appears. Verify wrist views if the selected Vuer mode presents them.
 8. Stand in a clear area. Align your arms with the robot's displayed initial pose to avoid a command discontinuity.
 9. In the xr_teleoperate terminal, press `r` to begin teleoperation.
-10. Press **Y** on the left Quest controller to reset and scramble the room while keeping the table fixed. Press **B** on the right controller to enable full table-group randomization and reset the room.
+10. Press **X** on the left Quest controller to start recording every live G1 camera to `~/Desktop/G1_Camera_Recordings`; press X again to finalize the MP4 files. Press **A** on the right controller to move only the Ridgeback to its next G1-facing arc point. Press **Y** on the left controller to reset and scramble the room while keeping the table fixed. Press **B** on the right controller to enable full table-group randomization and reset the room.
 11. Press `q` in the xr_teleoperate terminal to quit. Stop the simulator with `Ctrl+C` after the XR process has shut down.
 
 ### Recording
@@ -425,8 +425,10 @@ The reset topic accepts categories through the String payload on `rt/reset_pose/
 - Category `1`: object-only reset. Before full randomization is enabled, the medicine bottle uses the calibrated fixed-table spawn region. Afterward it respawns collision-free in the compact hand-reachable region on the current table; the rest of the layout is preserved.
 - Category `2` / Quest **B**: full-scene reset and table-randomization switch. The hospital Quest task starts with its table fixed at the calibrated location. Pressing B enables table-group randomization for the remainder of the session, then restores defaults, randomizes walls/furniture and the robot/table group, and places the target/tabletop objects.
 - Category `3` / Quest **Y**: fixed-table room reset. It restores defaults, returns the table-randomization switch to fixed mode, keeps the table at its authored anchor, and scrambles wall furniture plus tabletop objects around that fixed workspace.
+- Category `4` / Quest **A**: Ridgeback-only arc reset. It advances the one crate-carrying Ridgeback to its next equal-radius, G1-facing arc point while preserving the robot, table, room, and tabletop props.
+- Category `5` / Quest **X**: camera-recording toggle. It starts a timestamped Desktop session on the first press and finalizes one MP4 per live G1 camera on the next press.
 
-The randomized hospital task stores per-environment geometry in the room layout state. Robot pose/yaw, packing-table pose/yaw, target table-local pose, both static Ridgeback poses, selected wall layout, and tabletop placements share that source of truth. Teleoperation resets therefore follow the current layout instead of fixed world coordinates.
+The randomized hospital task stores per-environment geometry in the room layout state. Robot pose/yaw, packing-table pose/yaw, target table-local pose, the one static Ridgeback pose, selected wall layout, and tabletop placements share that source of truth. Teleoperation resets therefore follow the current layout instead of fixed world coordinates.
 
 ### Manual reset diagnostics
 
@@ -441,8 +443,8 @@ For production Quest operation, prefer xr_teleoperate's normal simulated reset/r
 
 ### What to observe after a full hospital reset
 
-- G1, the packing table, and both static crate-carrying Ridgebacks move as one validated randomized group.
-- The two Ridgebacks remain at fixed mirrored positions to G1 and their crates remain parented to their bases.
+- G1, the packing table, and one static crate-carrying Ridgeback move as one validated randomized group.
+- The Ridgeback cycles through collision-free, equal-radius points on the side arc around G1, beginning outside the rear no-spawn zone and advancing in 5-degree steps until the table boundary. Its crate stays parented to the base and faces G1 at every point.
 - The prescription target and three primitive-collider NVIDIA Hospital bottles remain in the compact hand-reachable tabletop region and out of reserved areas.
 - Camera streams continue without a duplicate-reset startup stall.
 - The assistant detects left/right hands in robot-local coordinates and delivers/returns relative to the current robot yaw.

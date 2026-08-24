@@ -18,6 +18,7 @@ import gymnasium as gym
 from pathlib import Path
 
 from tools.meta_quest import MetaQuestConfigurationError, configure_meta_quest
+from tools.quest_camera_recorder import QuestCameraRecorder
 
 # Isaac Lab AppLauncher
 from isaaclab.app import AppLauncher
@@ -82,6 +83,12 @@ parser.add_argument("--skip_cvtcolor", action="store_true", default=False, help=
 
 parser.add_argument("--camera_jpeg", action="store_true", default=True, help="enable JPEG compression for camera frames")
 parser.add_argument("--camera_jpeg_quality", type=int, default=85, help="JPEG quality (1-100)")
+parser.add_argument(
+    "--quest_recording_fps",
+    type=float,
+    default=30.0,
+    help="frames per second for Quest X camera recordings",
+)
 
 parser.add_argument("--physx_substeps", type=int, default=None, help="physx substeps per step")
 parser.add_argument("--camera_include", type=str, default="front_camera,left_wrist_camera,right_wrist_camera", help="comma-separated camera names to enable")
@@ -175,6 +182,7 @@ def setup_signal_handlers(controller,dds_manager=None,image_server=None):
 
 def main():
     """main function"""
+    camera_recorder = None
     # import cProfile
     # import pstats
     # import io
@@ -346,6 +354,19 @@ def main():
                 print(f"[camera] failed to tune sensors: {e}")
         except Exception as e:
             print(f"[camera] failed to apply writer options: {e}")
+        try:
+            camera_recorder = QuestCameraRecorder(
+                Path.home() / "Desktop" / "G1_Camera_Recordings",
+                frames_per_second=args_cli.quest_recording_fps,
+            )
+            print(
+                "[Quest recording] X toggles camera capture; sessions save under "
+                f"{camera_recorder.desktop_directory}",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[Quest recording] unavailable: {e}", flush=True)
+            camera_recorder = None
     except Exception as e:
         print(f"\nFailed to create environment: {e}")
         return
@@ -561,6 +582,21 @@ def main():
                                 print("reset room with fixed table")
                                 env_cfg.event_manager.trigger("reset_room_fixed_table_self", env)
                                 reset_pose_dds.write_reset_pose_command(-1)
+                            elif reset_category == '4':
+                                print("advance Ridgeback to the next arc point")
+                                env_cfg.event_manager.trigger("reset_ridgeback_arc_self", env)
+                                reset_pose_dds.write_reset_pose_command(-1)
+                            elif reset_category == '5':
+                                if camera_recorder is None:
+                                    print("[Quest recording] recorder is unavailable", flush=True)
+                                else:
+                                    recording, recording_path = camera_recorder.toggle()
+                                    action = "started" if recording else "saved"
+                                    print(
+                                        f"[Quest recording] {action}: {recording_path}",
+                                        flush=True,
+                                    )
+                                reset_pose_dds.write_reset_pose_command(-1)
                         except Exception as e:
                             print(f"Failed to write reset pose command: {e}")
                             raise e
@@ -609,6 +645,8 @@ def main():
                 
                 # execute control step (in main thread, support rendering)
                 controller.step()
+                if camera_recorder is not None:
+                    camera_recorder.capture(env, time.monotonic())
                 if hospital_success_publisher is not None and getattr(
                     env, "_hospital_success_reset_pending", False
                 ):
@@ -669,6 +707,8 @@ def main():
     finally:
         # clean up resources
         print("\nclean up resources...")
+        if camera_recorder is not None:
+            camera_recorder.close()
         controller.cleanup()
         image_server.stop()
         env.close()

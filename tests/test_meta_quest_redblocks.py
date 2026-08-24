@@ -249,7 +249,7 @@ class MetaQuestRedBlockTests(unittest.TestCase):
         self.assertRegex(
             source,
             r'def reset_hospital_tabletop_props[\s\S]+for asset_name in '
-            r'MEDICINE_BOTTLE_TABLE_PROP_NAMES[\s\S]+reset_target_on_current_table',
+            r'ACTIVE_MEDICAL_OBJECT_NAMES[\s\S]+reset_target_on_current_table',
         )
 
     def test_quest_fixed_table_room_reset_is_routed_to_both_hospital_tasks(self):
@@ -277,6 +277,22 @@ class MetaQuestRedBlockTests(unittest.TestCase):
             "env._teleop_randomize_table_position = False",
             medicine_bottle_source,
         )
+
+    def test_quest_a_routes_to_the_hospital_ridgeback_arc_reset(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        sim_source = (repo_root / "sim_main.py").read_text(encoding="utf-8")
+        medicine_bottle_source = (
+            repo_root
+            / "tasks/g1_tasks/pickplace_medicine_bottle_hospital_g1_29dof_dex1"
+            / "pickplace_medicine_bottle_hospital_g1_29dof_dex1_joint_env_cfg.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertRegex(
+            sim_source,
+            r"reset_category == '4'[\s\S]+reset_ridgeback_arc_self",
+        )
+        self.assertIn('"reset_ridgeback_arc_self"', medicine_bottle_source)
+        self.assertIn("def reset_hospital_ridgeback_arc", medicine_bottle_source)
 
     def test_hospital_success_notifies_quest_torso_recenter(self):
         repo_root = Path(__file__).resolve().parents[1]

@@ -37,13 +37,19 @@ region follows the table when the complete room layout is randomized.
 
 ## Rear-container goal
 
-The two green crates remain collision children of the kinematic left and right
-Ridgeback platforms. Scoring composes each crate's local transform with its
-live Ridgeback pose, so it remains correct after fixed or randomized room
-resets.
+One green crate remains a collision child of the kinematic Ridgeback platform.
+On each scene reset, the platform cycles through one of fourteen equal-radius points
+on the side arc around G1's feet. It starts outside the rear no-spawn zone,
+advances in 5-degree steps toward the table, and stops before table contact.
+It always turns its crate side toward G1 and keeps the screenshot-calibrated
+G1-foot-to-Ridgeback-tip clearance at 10 cm at every point. The 0.85 m value is
+the root-to-root radius, not the visible edge clearance. The five added points
+on each side continue at 25, 30, 35, 40, and 45 degrees. The arc deliberately
+does not reject possible G1/table OBB overlaps, as requested. Scoring composes the crate's local transform with its live Ridgeback
+pose, so it remains correct after fixed or randomized room resets.
 
-Each pill bottle may be placed in either crate, and both may be placed in the
-same crate. Reward is `0.0`, `0.5`, or `1.0` for zero, one, or two contained
+Both pill bottles are placed in this crate. Reward is `0.0`, `0.5`, or `1.0`
+for zero, one, or two contained
 pill bottles. When both are contained, the terminal reward is emitted and the
 episode immediately performs the Y-style reset: fixed table, centered torso,
 and newly scrambled room and tabletop props.
@@ -56,9 +62,13 @@ and newly scrambled room and tabletop props.
   complete table/robot/logistics group.
 - Reset category `3` keeps its existing Y-button behavior: scramble the room
   and all six objects while restoring the calibrated fixed table.
+- Reset category `4` / Quest **A** moves only the Ridgeback to the next
+  collision-free arc point. G1, the table, and all tabletop props stay put.
+- Reset category `5` / Quest **X** toggles recording of every live G1 camera.
+  Each recording session is saved under `~/Desktop/G1_Camera_Recordings`.
 
-The existing Quest Y/B bindings are unchanged. Their additive torso-centering
-behavior is also preserved.
+The existing Quest Y/B bindings and their additive torso-centering behavior
+are unchanged.
 
 ## Running
 

@@ -302,6 +302,55 @@ RIDGEBACK_PLANAR_YAW = math.pi / 2
 RIDGEBACK_BBOX = BBox(half_w=0.50, half_d=0.42)
 RIDGEBACK_CORRIDOR_HALF_WIDTH = RIDGEBACK_BBOX.half_d
 RIDGEBACK_GROUP_MARGIN = 0.0
+# Height of the dark rectangular support directly under the Ridgeback crate.
+# Edit this value to raise or lower that support and its parented container.
+RIDGEBACK_CONTAINER_RISER_HEIGHT = 0.15
+
+# Static hospital Ridgeback positions form a rear circular arc around G1's
+# feet.  The distance that matters is the visible edge gap in
+# Screenshot-2026-08-24_14-47-43: from G1's nearest foot to the Ridgeback's
+# G1-facing tip, not root-to-root.  The 0.85 m root radius is therefore the
+# 0.50 m Ridgeback half-length, 0.25 m G1 foot footprint, and 0.10 m gap.
+# The platform's local +X axis (and therefore its crate) is turned toward G1,
+# so every retained point has the same edge clearance.
+RIDGEBACK_STATIC_G1_FOOT_TIP_RADIUS = 0.25
+RIDGEBACK_STATIC_TIP_CLEARANCE_MAX = 0.03
+RIDGEBACK_STATIC_ARC_RADIUS = (
+    RIDGEBACK_STATIC_G1_FOOT_TIP_RADIUS
+    + RIDGEBACK_BBOX.half_w
+    + RIDGEBACK_STATIC_TIP_CLEARANCE_MAX
+)
+# Manual angle control: edit this list (degrees). Keep the values non-zero so
+# the Ridgeback is never spawned directly behind G1.
+RIDGEBACK_STATIC_ARC_ANGLES = tuple(
+    math.radians(angle)
+    for angle in (-25, -30, -35, -40, -45, -50, -55, -60, 25, 30, 35, 40, 45, 50, 55, 60)
+)
+
+
+def ridgeback_static_arc_pose(index: int) -> tuple[tuple[float, float], float]:
+    """Return one rear-semicircle Ridgeback position and its G1-facing yaw.
+
+    Local X points forward from G1 and local Y points to its left.  The arc is
+    centred behind G1, while the returned yaw offset turns the platform's
+    crate-facing local +X direction back toward G1.
+    """
+    angle = RIDGEBACK_STATIC_ARC_ANGLES[index % len(RIDGEBACK_STATIC_ARC_ANGLES)]
+    local_xy = (
+        -RIDGEBACK_STATIC_ARC_RADIUS * math.cos(angle),
+        RIDGEBACK_STATIC_ARC_RADIUS * math.sin(angle),
+    )
+    return local_xy, -angle
+
+
+def ridgeback_static_arc_tip_clearance(index: int) -> float:
+    """Return the calibrated G1-feet-to-Ridgeback-tip clearance in metres."""
+    local_xy, _ = ridgeback_static_arc_pose(index)
+    return (
+        math.hypot(*local_xy)
+        - RIDGEBACK_STATIC_G1_FOOT_TIP_RADIUS
+        - RIDGEBACK_BBOX.half_w
+    )
 
 # Despawn height
 DESPAWN_Z = -100.0
@@ -424,6 +473,15 @@ TABLE_RESERVED_AREAS: List[TableReservedArea] = [
 
 TABLE_PROP_META: Dict[str, TablePropMeta] = {
     "coffee_cup":   TablePropMeta(bbox=BBox(half_w=0.043, half_d=0.043)),
+    "cup_half_full": TablePropMeta(
+        bbox=BBox(half_w=0.045000, half_d=0.059930), dynamic=True, mandatory=True
+    ),
+    "plastic_cup": TablePropMeta(
+        bbox=BBox(half_w=0.035000, half_d=0.035000), dynamic=True, mandatory=True
+    ),
+    "felt_pen_pink": TablePropMeta(
+        bbox=BBox(half_w=0.059126, half_d=0.007000), dynamic=True, mandatory=True
+    ),
     "desk_lamp":    TablePropMeta(bbox=BBox(half_w=0.241, half_d=0.134)),
     "box_portable": TablePropMeta(bbox=BBox(half_w=0.195, half_d=0.145)),
     "blue_cube":    TablePropMeta(bbox=BBox(half_w=0.05, half_d=0.05), dynamic=True, mandatory=True),

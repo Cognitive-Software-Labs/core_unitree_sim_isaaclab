@@ -152,6 +152,7 @@ class StaticClusterMember:
     robot_local_xy: tuple[float, float]
     yaw_offset: float
     bbox: BBox
+    allow_protected_overlap: bool = False
 
 
 @dataclass
@@ -1195,6 +1196,7 @@ def _validate_table_group(
     placed: List[OBB],
     placed_names: list[str],
     spawn_boundaries: list[tuple[str, OBB]],
+    allowed_protected_overlap_names: frozenset[str] = frozenset(),
 ) -> tuple[bool, list[str]]:
     """Validate table-group room bounds and overlaps."""
     issues: list[str] = []
@@ -1224,6 +1226,11 @@ def _validate_table_group(
 
     for i, (a_name, a_box) in enumerate(table_obbs):
         for b_name, b_box in table_obbs[i + 1:]:
+            if (
+                {a_name, b_name} & allowed_protected_overlap_names
+                and {a_name, b_name} & {"packing_table", "robot"}
+            ):
+                continue
             if _is_moving_ridgeback_geometry(a_name) and _is_moving_ridgeback_geometry(
                 b_name
             ):
@@ -1267,6 +1274,11 @@ def _place_table_group(
     desk_asset = env.scene["packing_table"]
     robot_asset = env.scene["robot"]
     include_ridgeback = "ridgeback" in env.scene.keys()
+    allowed_protected_overlap_names = frozenset(
+        member.asset_name
+        for member in static_cluster_members
+        if member.allow_protected_overlap
+    )
 
     for env_idx in range(M):
         success = False
@@ -1295,6 +1307,24 @@ def _place_table_group(
                     rx, ry, robot_yaw, static_cluster_members
                 )
             )
+            # Fixed teleoperation layouts intentionally bypass the conservative
+            # room-boundary rejection below. Static logistics platforms retain
+            # the protected G1/table overlap check unless their task explicitly
+            # opts out (the close hospital Ridgeback arc does so).
+            static_boxes = dict(table_obbs)
+            for member in static_cluster_members:
+                if member.allow_protected_overlap:
+                    continue
+                for protected_name in ("packing_table", "robot"):
+                    if obb_overlap(
+                        static_boxes[member.asset_name],
+                        static_boxes[protected_name],
+                        margin=RIDGEBACK_GROUP_MARGIN,
+                    ):
+                        raise RuntimeError(
+                            "static cluster member overlaps fixed teleoperation "
+                            f"{protected_name}: {member.asset_name}"
+                        )
             # The fixed pose is an explicitly calibrated task authoring choice.
             # Do not reject it using the deliberately conservative randomized-
             # placement OBBs: the packing-table proxy slightly crosses a
@@ -1322,6 +1352,7 @@ def _place_table_group(
                     all_placed[env_idx],
                     all_placed_names[env_idx],
                     spawn_boundaries[env_idx],
+                    allowed_protected_overlap_names,
                 )
                 if not valid:
                     continue
@@ -1347,7 +1378,11 @@ def _place_table_group(
                     static_cluster_members=static_cluster_members,
                 )
                 valid, fallback_issues = _validate_table_group(
-                    table_obbs, all_placed[env_idx], all_placed_names[env_idx], spawn_boundaries[env_idx]
+                    table_obbs,
+                    all_placed[env_idx],
+                    all_placed_names[env_idx],
+                    spawn_boundaries[env_idx],
+                    allowed_protected_overlap_names,
                 )
                 if valid:
                     desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)

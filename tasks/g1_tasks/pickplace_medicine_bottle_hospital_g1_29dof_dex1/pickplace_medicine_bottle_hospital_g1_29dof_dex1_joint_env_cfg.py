@@ -53,14 +53,48 @@ from tasks.utils.room_randomizer import (
     TabletopSpawnRegion,
     randomize_pickplace_room_layout,
 )
-from tasks.utils.room_randomizer.room_events import reset_target_on_current_table
-from tasks.utils.room_randomizer.constants import BBox, TablePropMeta
+from tasks.utils.room_randomizer.room_events import (
+    Pose2D,
+    reset_target_on_current_table,
+)
+from tasks.utils.room_randomizer.constants import (
+    BBox,
+    RIDGEBACK_CONTAINER_RISER_HEIGHT,
+    TablePropMeta,
+    ridgeback_static_arc_pose,
+)
+from tasks.utils.room_randomizer.placement_utils import (
+    build_root_state,
+    offset_from_yaw_batched,
+)
 from tasks.utils.room_randomizer.pickplace_config import (
     WALL_PROP_NAMES,
 )
 from tools.camera_optics import HOSPITAL_FRONT_CAMERA_OPTICS
+from tools.medical_object_catalog import (
+    MEDICAL_OBJECT_SPECS,
+    OBJECT_ROLES_ENV,
+    ROLE_DISTRACTOR,
+    ROLE_IMPORTANT,
+    parse_roles,
+)
 
 project_root = os.environ.get("PROJECT_ROOT")
+
+MEDICAL_OBJECT_ROLES = parse_roles(os.environ.get(OBJECT_ROLES_ENV))
+IMPORTANT_MEDICAL_OBJECT_NAMES = tuple(
+    spec.scene_name
+    for spec in MEDICAL_OBJECT_SPECS
+    if MEDICAL_OBJECT_ROLES[spec.scene_name] == ROLE_IMPORTANT
+)
+DISTRACTOR_MEDICAL_OBJECT_NAMES = tuple(
+    spec.scene_name
+    for spec in MEDICAL_OBJECT_SPECS
+    if MEDICAL_OBJECT_ROLES[spec.scene_name] == ROLE_DISTRACTOR
+)
+ACTIVE_MEDICAL_OBJECT_NAMES = (
+    IMPORTANT_MEDICAL_OBJECT_NAMES + DISTRACTOR_MEDICAL_OBJECT_NAMES
+)
 
 RIDGEBACK_OMNIVERSE_USD = (
     "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/"
@@ -69,14 +103,6 @@ RIDGEBACK_OMNIVERSE_USD = (
 CRATE_OMNIVERSE_USD = (
     "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/"
     "Isaac/Environments/Simple_Warehouse/Props/SM_CratePlastic_D_02.usd"
-)
-HOSPITAL_PROPS_OMNIVERSE_ROOT = (
-    "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/"
-    "Isaac/Environments/Hospital/Props"
-)
-OFFICE_PROPS_OMNIVERSE_ROOT = (
-    "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/"
-    "Isaac/Environments/Office/Props"
 )
 RIDGEBACK_DISABLED_PRIM_NAMES = {
     "ur_arm_shoulder_pan_joint",
@@ -88,15 +114,21 @@ RIDGEBACK_DISABLED_PRIM_NAMES = {
     "ur_arm_wrist_3_link",
 }
 
-# Screenshot-derived yaw-only rotations. The small roll/pitch values shown by
-# the live physics inspector are transient settling drift, so the task keeps
-# the static logistics bases level and preserves their table/crate headings.
-RIDGEBACK_LEFT_ROT = (0.2241687075, 0.0, 0.0, -0.9745503530)   # yaw -154.092°
-RIDGEBACK_RIGHT_ROT = (0.9745503530, 0.0, 0.0, -0.2241687075)  # mirrored yaw -25.908°
-RIDGEBACK_LEFT_YAW_OFFSET = -1.118616424188206
-RIDGEBACK_RIGHT_YAW_OFFSET = 1.118616424188206
-CRATE_LEFT_ROT = (0.7095584382, 0.0, 0.0, -0.7046465942)      # yaw -89.602°
-CRATE_RIGHT_ROT = (0.7095584382, 0.0, 0.0, 0.7046465942)      # mirrored yaw +89.602°
+# The Ridgeback body is turned 180 degrees.  Its crate and riser are
+# counter-transformed in base_link so they keep their original world pose
+# relative to G1 and the room.
+RIDGEBACK_BODY_YAW_OFFSET = torch.pi
+CRATE_LOCAL_ROT = (0.7046465942, 0.0, 0.0, 0.7095584382)
+CRATE_RISER_SIZE = (0.46, 0.35, RIDGEBACK_CONTAINER_RISER_HEIGHT)
+RIDGEBACK_BODY_COLOR = (0.15, 0.15, 0.15)
+# The original crate floor was at 28.576 cm above Ridgeback's base_link.  The
+# riser sits below it and raises the entire container by its configured height.
+CRATE_LOCAL_POS = (-0.22877, -0.00612, 0.43576)
+CRATE_RISER_LOCAL_POS = (
+    CRATE_LOCAL_POS[0],
+    CRATE_LOCAL_POS[1],
+    CRATE_LOCAL_POS[2] - RIDGEBACK_CONTAINER_RISER_HEIGHT * 0.5,
+)
 
 
 # ----------------------------------------------------------------------------
@@ -445,90 +477,57 @@ def _ridgeback_crate_cfg(
             usd_path=CRATE_OMNIVERSE_USD,
         ),
         init_state=AssetBaseCfg.InitialStateCfg(
-            # Screenshot-2026-08-23_14-03-34 records the crate centered on
-            # RidgebackLeft's deck. Its local-Y offset is reflected for the
-            # mirrored right platform, preserving a world-X mirror across G1
-            # while keeping both crates deck-centered and table-aligned.
+            # The crate's local transform counteracts the reversed Ridgeback,
+            # preserving the same world pose beside G1 at every arc point.
             pos=(local_x, local_y, local_z),
             rot=local_rot,
         ),
     )
 
 
+def _ridgeback_crate_riser_cfg(
+    prim_path: str,
+    local_pos: tuple[float, float, float],
+    local_rot: tuple[float, float, float, float],
+) -> AssetBaseCfg:
+    """Create the configured-height dark Ridgeback-coloured support below the crate."""
+    return AssetBaseCfg(
+        prim_path=prim_path,
+        spawn=sim_utils.CuboidCfg(
+            size=CRATE_RISER_SIZE,
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=RIDGEBACK_BODY_COLOR,
+                metallic=0.5,
+            ),
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=local_pos, rot=local_rot),
+    )
+
+
 @dataclass(frozen=True)
 class HospitalPropSpec:
-    filename: str
-    asset_root: str
+    usd_path: str
     scale: float
     mass: float
     min_z: float
     bbox: BBox
-    grasp_width: float
 
 
 TABLETOP_SURFACE_Z = 0.794
 TABLETOP_SPAWN_CLEARANCE = 0.003
 HOSPITAL_PROP_SPECS = {
-    # Exact natural-scale selection from Screenshot-2026-08-23_16-05-21.png.
-    # The two small pill bottles are the scored targets; the other four remain
-    # fully dynamic, collision-enabled tabletop clutter.
-    "pill_bottle_t": HospitalPropSpec(
-        filename="SM_PillBottle_01t.usd",
-        asset_root=HOSPITAL_PROPS_OMNIVERSE_ROOT,
+    catalog_spec.scene_name: HospitalPropSpec(
+        usd_path=catalog_spec.asset_url,
         scale=1.0,
-        mass=0.03,
-        min_z=0.0,
-        bbox=BBox(half_w=0.014611, half_d=0.014611),
-        grasp_width=0.029222,
-    ),
-    "pill_bottle_v": HospitalPropSpec(
-        filename="SM_PillBottle_01v.usd",
-        asset_root=HOSPITAL_PROPS_OMNIVERSE_ROOT,
-        scale=1.0,
-        mass=0.03,
-        min_z=0.0,
-        bbox=BBox(half_w=0.013665, half_d=0.013665),
-        grasp_width=0.027330,
-    ),
-    "medical_bottle_a": HospitalPropSpec(
-        filename="SM_BottleA.usd",
-        asset_root=HOSPITAL_PROPS_OMNIVERSE_ROOT,
-        scale=1.0,
-        mass=0.15,
-        min_z=0.0,
-        bbox=BBox(half_w=0.031000, half_d=0.031000),
-        grasp_width=0.062000,
-    ),
-    "medical_bottle_f": HospitalPropSpec(
-        filename="SM_BottleF.usd",
-        asset_root=HOSPITAL_PROPS_OMNIVERSE_ROOT,
-        scale=1.0,
-        mass=0.15,
-        min_z=0.0,
-        bbox=BBox(half_w=0.030050, half_d=0.030050),
-        grasp_width=0.060100,
-    ),
-    "marker_blue": HospitalPropSpec(
-        filename="SM_MarkerBlue.usd",
-        asset_root=OFFICE_PROPS_OMNIVERSE_ROOT,
-        scale=1.0,
-        mass=0.02,
-        min_z=0.000130,
-        bbox=BBox(half_w=0.058500, half_d=0.012140),
-        grasp_width=0.024280,
-    ),
-    "marker_yellow": HospitalPropSpec(
-        filename="SM_MarkerYellow.usd",
-        asset_root=OFFICE_PROPS_OMNIVERSE_ROOT,
-        scale=1.0,
-        mass=0.02,
-        min_z=0.000130,
-        bbox=BBox(half_w=0.058500, half_d=0.012140),
-        grasp_width=0.024280,
-    ),
+        mass=catalog_spec.mass,
+        min_z=catalog_spec.min_z,
+        bbox=BBox(*catalog_spec.bbox_half_xy),
+    )
+    for catalog_spec in MEDICAL_OBJECT_SPECS
 }
 
-MEDICINE_BOTTLE_TABLE_PROP_META_OVERRIDES = {
+MEDICAL_OBJECT_TABLE_PROP_META_OVERRIDES = {
     name: TablePropMeta(bbox=spec.bbox, dynamic=True, mandatory=True)
     for name, spec in HOSPITAL_PROP_SPECS.items()
 }
@@ -552,7 +551,7 @@ def _hospital_prop_cfg(
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         spawn=GraspableHospitalUsdFileCfg(
-            usd_path=f"{spec.asset_root}/{spec.filename}",
+            usd_path=spec.usd_path,
             scale=(spec.scale, spec.scale, spec.scale),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 linear_damping=1.5,
@@ -573,6 +572,17 @@ def _hospital_prop_cfg(
     )
 
 
+def _selected_hospital_prop_cfg(
+    name: str,
+    prim_path: str,
+    init_xy: tuple[float, float],
+) -> RigidObjectCfg | None:
+    """Spawn a MedicalObjects asset only when the GUI assigns it a role."""
+    if name not in ACTIVE_MEDICAL_OBJECT_NAMES:
+        return None
+    return _hospital_prop_cfg(name, prim_path, init_xy)
+
+
 # ----------------------------------------------------------------------------
 # Fixed-layout world coordinates (hospital room interior).
 # Derived from the warehouse task translated by T = (-1.7, -3.3, 0).
@@ -581,29 +591,34 @@ TABLE_POS = (-6.0, -7.5, -0.2)          # TUNE: open interior of new_base_room.u
 ROBOT_POS = (-5.9, -7.0, 0.76)          # +Y of table by 0.5 m, same as warehouse
 ROBOT_ROT = (0.7071, 0.0, 0.0, -0.7071)  # yaw -90deg, robot faces the table
 
-# Fixed-layout pose tuned in Isaac Sim. The left pose is the transform captured
-# in Screenshot-2026-08-23_14-03-10.png; the right pose is its reflection across
-# G1's x=-5.9 centerline. Keep the robot-local offsets below in sync so room
-# resets preserve the same mirrored arrangement around G1.
-RIDGEBACK_LEFT_POS = (-5.20520, -6.66770, 0.0328)
-RIDGEBACK_RIGHT_POS = (-6.59480, -6.66770, 0.0328)
-STATIC_LOGISTICS_CLUSTER = (
-    StaticClusterMember(
-        asset_name="ridgeback_left",
-        # Screenshot-2026-08-23_14-03-10: mirrored, 90-degree yawed
-        # Ridgebacks. The 1.38960 m center separation leaves positive physical
-        # clearance after projecting their table-facing OBBs onto world X.
-        robot_local_xy=(-0.33230, 0.69480),
-        yaw_offset=RIDGEBACK_LEFT_YAW_OFFSET,
-        bbox=BBox(half_w=0.50, half_d=0.42),
-    ),
-    StaticClusterMember(
-        asset_name="ridgeback_right",
-        robot_local_xy=(-0.33230, -0.69480),
-        yaw_offset=RIDGEBACK_RIGHT_YAW_OFFSET,
-        bbox=BBox(half_w=0.50, half_d=0.42),
-    ),
-)
+# The first spawn is 20 degrees off G1's rear centre.  At the calibrated
+# 10 cm edge gap, the next 5-degree points touch the packing table, while the
+# rear-centre points remain no-spawn positions.
+RIDGEBACK_POS = (-6.190717, -6.201272, 0.0328)
+RIDGEBACK_ROT = (0.5735764364, 0.0, 0.0, 0.8191520443)
+RIDGEBACK_ARC_BBOX = BBox(half_w=0.50, half_d=0.42)
+
+
+def _next_static_logistics_cluster(env) -> tuple[StaticClusterMember, ...]:
+    """Cycle one crate-carrying Ridgeback through the equal-radius rear arc."""
+    previous_index = getattr(env, "_hospital_ridgeback_arc_index", None)
+    if previous_index is None:
+        index = 0  # left-rear point: close to G1 without directly trailing it
+    else:
+        index = previous_index + 1
+    env._hospital_ridgeback_arc_index = index
+    robot_local_xy, yaw_offset = ridgeback_static_arc_pose(index)
+    return (
+        StaticClusterMember(
+            asset_name="ridgeback",
+            robot_local_xy=robot_local_xy,
+            yaw_offset=yaw_offset + float(RIDGEBACK_BODY_YAW_OFFSET),
+            # The requested full arc deliberately includes points that may
+            # overlap the table/G1 OBB proxies.
+            bbox=RIDGEBACK_ARC_BBOX,
+            allow_protected_overlap=True,
+        ),
+    )
 HAND_REACHABLE_TABLETOP_REGION = TabletopSpawnRegion(
     # G1 is at table-local (0.10, 0.50), facing toward decreasing Y.
     # These bounds sit directly in front of the two default Dex1 jaws and keep
@@ -615,14 +630,20 @@ HAND_REACHABLE_TABLETOP_REGION = TabletopSpawnRegion(
 )
 COMPACT_TABLETOP_OBJECT_MARGIN = 0.015
 
-MEDICINE_BOTTLE_TABLE_PROP_NAMES = [
-    "pill_bottle_t",
-    "pill_bottle_v",
-    "medical_bottle_a",
-    "medical_bottle_f",
-    "marker_blue",
-    "marker_yellow",
-]
+FULL_MEDICAL_TABLETOP_REGION = TabletopSpawnRegion(
+    x_min=-0.85,
+    x_max=0.18,
+    y_min=-0.28,
+    y_max=0.28,
+)
+# Keep the established hand-reachable layout for up to six active objects.
+# Larger selections use the rest of the physical tabletop so all ten authored
+# MedicalObjects assets can be placed without overlap.
+ACTIVE_MEDICAL_TABLETOP_REGION = (
+    HAND_REACHABLE_TABLETOP_REGION
+    if len(ACTIVE_MEDICAL_OBJECT_NAMES) <= 6
+    else FULL_MEDICAL_TABLETOP_REGION
+)
 
 
 def _apply_hospital_front_camera_optics(env) -> None:
@@ -671,36 +692,83 @@ def reset_hospital_teleop_scene(
 
     base_mdp.reset_scene_to_default(env, env_ids)
     _apply_hospital_front_camera_optics(env)
+    static_cluster = _next_static_logistics_cluster(env)
     randomize_pickplace_room_layout(
         env,
         env_ids,
         wall_prop_names=WALL_PROP_NAMES,
-        table_prop_names=MEDICINE_BOTTLE_TABLE_PROP_NAMES,
-        min_table_objects=len(MEDICINE_BOTTLE_TABLE_PROP_NAMES),
+        table_prop_names=list(ACTIVE_MEDICAL_OBJECT_NAMES),
+        min_table_objects=len(ACTIVE_MEDICAL_OBJECT_NAMES),
         randomize_table_position=randomize_table_position,
-        table_prop_meta_overrides=MEDICINE_BOTTLE_TABLE_PROP_META_OVERRIDES,
-        tabletop_spawn_region=HAND_REACHABLE_TABLETOP_REGION,
+        table_prop_meta_overrides=MEDICAL_OBJECT_TABLE_PROP_META_OVERRIDES,
+        tabletop_spawn_region=ACTIVE_MEDICAL_TABLETOP_REGION,
         tabletop_object_margin=COMPACT_TABLETOP_OBJECT_MARGIN,
-        static_cluster_members=STATIC_LOGISTICS_CLUSTER,
+        static_cluster_members=static_cluster,
     )
-
     mode = "full randomization" if randomize_table_position else "fixed table"
     print(f"[Meta Quest reset] hospital scene restored ({mode})", flush=True)
 
 
 def reset_hospital_tabletop_props(env) -> None:
-    """Respawn all six props without moving the table, robot, room, or bins."""
+    """Respawn every selected object without moving the table, robot, room, or bins."""
     env_ids = torch.arange(env.num_envs, device=env.device)
-    for asset_name in MEDICINE_BOTTLE_TABLE_PROP_NAMES:
+    for asset_name in ACTIVE_MEDICAL_OBJECT_NAMES:
         reset_target_on_current_table(
             env,
             env_ids,
             asset_name=asset_name,
-            table_prop_meta_overrides=MEDICINE_BOTTLE_TABLE_PROP_META_OVERRIDES,
-            tabletop_spawn_region=HAND_REACHABLE_TABLETOP_REGION,
+            table_prop_meta_overrides=MEDICAL_OBJECT_TABLE_PROP_META_OVERRIDES,
+            tabletop_spawn_region=ACTIVE_MEDICAL_TABLETOP_REGION,
             tabletop_object_margin=COMPACT_TABLETOP_OBJECT_MARGIN,
         )
-    print("[Meta Quest reset] all six tabletop props respawned", flush=True)
+    print(
+        f"[Meta Quest reset] {len(ACTIVE_MEDICAL_OBJECT_NAMES)} selected tabletop props respawned",
+        flush=True,
+    )
+
+
+def _yaw_from_quaternion_wxyz(quaternion: torch.Tensor) -> torch.Tensor:
+    """Return one planar yaw angle per scalar-first quaternion."""
+    w, x, y, z = quaternion.unbind(dim=-1)
+    return torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def reset_hospital_ridgeback_arc(env) -> None:
+    """Move only the hospital Ridgeback to the next requested arc point."""
+    env_ids = torch.arange(env.num_envs, device=env.device)
+    (member,) = _next_static_logistics_cluster(env)
+    robot = env.scene["robot"]
+    ridgeback = env.scene[member.asset_name]
+    origins = env.scene.env_origins
+    robot_positions = robot.data.root_pos_w[env_ids] - origins[env_ids]
+    robot_yaws = _yaw_from_quaternion_wxyz(robot.data.root_quat_w[env_ids])
+    ridgeback_positions = offset_from_yaw_batched(
+        robot_positions,
+        robot_yaws,
+        member.robot_local_xy[0],
+        member.robot_local_xy[1],
+        float(ridgeback.data.default_root_state[0, 2] - origins[0, 2]),
+    )
+    ridgeback_yaws = robot_yaws + member.yaw_offset
+
+    ridgeback_state = build_root_state(
+        ridgeback_positions,
+        ridgeback_yaws,
+        origins,
+        env_ids,
+        ridgeback.data.default_root_state,
+    )
+    ridgeback.write_root_pose_to_sim(ridgeback_state[:, :7], env_ids=env_ids)
+
+    layout_states = getattr(env, "_room_layout_state", {})
+    for env_idx, env_id_tensor in enumerate(env_ids):
+        state = layout_states.get(int(env_id_tensor.item()))
+        if state is not None:
+            state.static_cluster_poses[member.asset_name] = Pose2D(
+                position=tuple(float(value) for value in ridgeback_state[env_idx, :3]),
+                yaw=float(ridgeback_yaws[env_idx]),
+            )
+    print("[Meta Quest reset] Ridgeback advanced to the next G1-facing arc point", flush=True)
 
 
 def reset_hospital_room_fixed_table(env) -> None:
@@ -709,17 +777,18 @@ def reset_hospital_room_fixed_table(env) -> None:
     env._teleop_randomize_table_position = False
     base_mdp.reset_scene_to_default(env, env_ids)
     _apply_hospital_front_camera_optics(env)
+    static_cluster = _next_static_logistics_cluster(env)
     randomize_pickplace_room_layout(
         env,
         env_ids,
         wall_prop_names=WALL_PROP_NAMES,
-        table_prop_names=MEDICINE_BOTTLE_TABLE_PROP_NAMES,
-        min_table_objects=len(MEDICINE_BOTTLE_TABLE_PROP_NAMES),
+        table_prop_names=list(ACTIVE_MEDICAL_OBJECT_NAMES),
+        min_table_objects=len(ACTIVE_MEDICAL_OBJECT_NAMES),
         randomize_table_position=False,
-        table_prop_meta_overrides=MEDICINE_BOTTLE_TABLE_PROP_META_OVERRIDES,
-        tabletop_spawn_region=HAND_REACHABLE_TABLETOP_REGION,
+        table_prop_meta_overrides=MEDICAL_OBJECT_TABLE_PROP_META_OVERRIDES,
+        tabletop_spawn_region=ACTIVE_MEDICAL_TABLETOP_REGION,
         tabletop_object_margin=COMPACT_TABLETOP_OBJECT_MARGIN,
-        static_cluster_members=STATIC_LOGISTICS_CLUSTER,
+        static_cluster_members=static_cluster,
     )
     print("[Meta Quest reset] hospital room scrambled (fixed table)", flush=True)
 
@@ -742,68 +811,83 @@ class HospitalMedicineBottleSceneCfg(RandomizedRoomPickPlaceSceneCfg):
         init_state=RigidObjectCfg.InitialStateCfg(pos=TABLE_POS),
     )
 
-    # Exact six-prop selection from the latest hospital screenshot. Every
-    # source mesh is a positive-mass rigid body with convex decomposition.
+    # Every MedicalObjects child has a scene field. The GUI role map decides
+    # which configs exist for this process; important and distractor objects
+    # use identical physical spawning and differ only in success evaluation.
     object = None
-    pill_bottle_t: RigidObjectCfg = _hospital_prop_cfg(
+    coffee_cup = _selected_hospital_prop_cfg(
+        "coffee_cup",
+        prim_path="/World/envs/env_.*/CoffeeCup",
+        init_xy=(-6.34, -7.36),
+    )
+    pill_bottle_t: RigidObjectCfg | None = _selected_hospital_prop_cfg(
         "pill_bottle_t",
         prim_path="/World/envs/env_.*/PillBottleT",
         init_xy=(-6.02, -7.42),
     )
-    pill_bottle_v: RigidObjectCfg = _hospital_prop_cfg(
+    pill_bottle_v: RigidObjectCfg | None = _selected_hospital_prop_cfg(
         "pill_bottle_v",
         prim_path="/World/envs/env_.*/PillBottleV",
         init_xy=(-6.15, -7.42),
     )
-    medical_bottle_a: RigidObjectCfg = _hospital_prop_cfg(
+    cup_half_full: RigidObjectCfg | None = _selected_hospital_prop_cfg(
+        "cup_half_full",
+        prim_path="/World/envs/env_.*/CupHalfFull",
+        init_xy=(-5.72, -7.36),
+    )
+    medical_bottle_a: RigidObjectCfg | None = _selected_hospital_prop_cfg(
         "medical_bottle_a",
         prim_path="/World/envs/env_.*/MedicalBottleA",
         init_xy=(-6.27, -7.42),
     )
-    medical_bottle_f: RigidObjectCfg = _hospital_prop_cfg(
+    plastic_cup: RigidObjectCfg | None = _selected_hospital_prop_cfg(
+        "plastic_cup",
+        prim_path="/World/envs/env_.*/PlasticCup",
+        init_xy=(-5.82, -7.62),
+    )
+    medical_bottle_f: RigidObjectCfg | None = _selected_hospital_prop_cfg(
         "medical_bottle_f",
         prim_path="/World/envs/env_.*/MedicalBottleF",
         init_xy=(-5.87, -7.42),
     )
-    marker_blue: RigidObjectCfg = _hospital_prop_cfg(
+    marker_blue: RigidObjectCfg | None = _selected_hospital_prop_cfg(
         "marker_blue",
         prim_path="/World/envs/env_.*/MarkerBlue",
         init_xy=(-6.22, -7.58),
     )
-    marker_yellow: RigidObjectCfg = _hospital_prop_cfg(
+    marker_yellow: RigidObjectCfg | None = _selected_hospital_prop_cfg(
         "marker_yellow",
         prim_path="/World/envs/env_.*/MarkerYellow",
         init_xy=(-5.98, -7.58),
+    )
+    felt_pen_pink: RigidObjectCfg | None = _selected_hospital_prop_cfg(
+        "felt_pen_pink",
+        prim_path="/World/envs/env_.*/FeltPenPink",
+        init_xy=(-6.44, -7.60),
     )
 
     blue_cube = None
     yellow_cube = None
 
-    # Two static Omniverse Ridgeback meshes flank G1.  Each crate is authored
-    # below base_link, so it inherits its platform pose on every room reset.
-    ridgeback_left: RigidObjectCfg = _static_ridgeback_cfg(
-        "/World/envs/env_.*/RidgebackLeft",
-        RIDGEBACK_LEFT_POS,
-        RIDGEBACK_LEFT_ROT,
+    # One reversed static Ridgeback occupies a rear-arc point. Its crate and
+    # riser are base_link children counter-transformed to remain fixed in the
+    # same G1/room-relative pose.
+    ridgeback: RigidObjectCfg = _static_ridgeback_cfg(
+        "/World/envs/env_.*/Ridgeback",
+        RIDGEBACK_POS,
+        RIDGEBACK_ROT,
     )
-    ridgeback_left_crate: AssetBaseCfg = _ridgeback_crate_cfg(
-        "/World/envs/env_.*/RidgebackLeft/base_link/Crate",
-        local_x=0.22877,
-        local_y=0.00612,
-        local_z=0.28576,
-        local_rot=CRATE_LEFT_ROT,
+    ridgeback_crate_riser: AssetBaseCfg = _ridgeback_crate_riser_cfg(
+        "/World/envs/env_.*/Ridgeback/base_link/CrateRiser",
+        local_pos=CRATE_RISER_LOCAL_POS,
+        local_rot=CRATE_LOCAL_ROT,
     )
-    ridgeback_right: RigidObjectCfg = _static_ridgeback_cfg(
-        "/World/envs/env_.*/RidgebackRight",
-        RIDGEBACK_RIGHT_POS,
-        RIDGEBACK_RIGHT_ROT,
-    )
-    ridgeback_right_crate: AssetBaseCfg = _ridgeback_crate_cfg(
-        "/World/envs/env_.*/RidgebackRight/base_link/Crate",
-        local_x=0.22877,
-        local_y=-0.00612,
-        local_z=0.28576,
-        local_rot=CRATE_RIGHT_ROT,
+    ridgeback_crate: AssetBaseCfg = _ridgeback_crate_cfg(
+        "/World/envs/env_.*/Ridgeback/base_link/Crate",
+        local_x=CRATE_LOCAL_POS[0],
+        local_y=CRATE_LOCAL_POS[1],
+        local_z=CRATE_LOCAL_POS[2],
+        local_rot=CRATE_LOCAL_ROT,
     )
 
     # --- robot + cameras ---------------------------------------------------
@@ -877,9 +961,7 @@ class HospitalMedicineBottleSceneCfg(RandomizedRoomPickPlaceSceneCfg):
         rot_offset=(-0.3173, 0.94833, 0.0, 0.0),
     )
 
-    # Keep the inherited wall-prop assets enabled. Their reset event reads the
-    # shared WALL_PROP_META constants and hides the baked-in duplicates.
-    coffee_cup = None
+    # These authored desk props are outside /World/MedicalObjects.
     desk_lamp = None
     box_portable = None
 
@@ -911,14 +993,13 @@ class ObservationsCfg:
 
 @configclass
 class TerminationsCfg:
-    # Both pill bottles may occupy either rear crate, including the same crate.
-    success = DoneTerm(func=mdp.both_pill_bottles_contained)
+    success = DoneTerm(func=mdp.all_important_objects_contained)
 
 
 @configclass
 class RewardsCfg:
     reward = RewTerm(
-        func=mdp.compute_pill_bottle_reward,
+        func=mdp.compute_important_object_reward,
         weight=1.0,
     )
 
@@ -975,6 +1056,10 @@ class PickPlaceMedicineBottleHospitalG129DEX1EnvCfg(ManagerBasedRLEnvCfg):
         self.event_manager.register("reset_object_self", SimpleEvent(
             func=reset_hospital_tabletop_props
         ))
+        self.event_manager.register(
+            "reset_ridgeback_arc_self",
+            SimpleEvent(func=reset_hospital_ridgeback_arc),
+        )
         self.event_manager.register("reset_all_self", SimpleEvent(
             # Quest/xr_teleoperate's full-reset button sends DDS category 2.
             func=lambda env: reset_hospital_teleop_scene(
