@@ -121,6 +121,13 @@ if [ ! -d "install" ]; then
 fi
 
 export CYCLONEDDS_HOME="$(pwd)/install"
+# CMake's find_package needs this too; without it, the cyclonedds Python
+# package built in Phase 3 can silently link against the wrong (or no)
+# libddsc, producing a "buffer overflow detected" abort the first time
+# ChannelFactoryInitialize is given a network interface (see README's
+# "Could not locate cyclonedds" troubleshooting entry for the manual fix
+# this automates).
+export CMAKE_PREFIX_PATH="$CYCLONEDDS_HOME"
 cd "$UNITREE_DIR"
 
 
