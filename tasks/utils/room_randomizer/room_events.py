@@ -1398,12 +1398,43 @@ def _place_table_group(
                     break
 
             if not success:
+                # Randomized placement could not find a collision-free layout
+                # after both the primary and fallback search passes. Fall back
+                # to the calibrated fixed teleoperation anchor (the same pose
+                # used by randomize_position=False) instead of despawning the
+                # table: walls already placed this call were sampled without
+                # reserving that anchor, so a rare residual overlap is
+                # possible, but that is strictly better than silently losing
+                # the table for the rest of the session.
                 env_id = _env_id_int(env_ids, env_idx)
-                desk_positions[env_idx] = torch.tensor([0.0, 0.0, DESPAWN_Z], device=device)
-                desk_yaws[env_idx] = 0.0
+                default_state = desk_asset.data.default_root_state[env_id]
+                origin = env_origins[env_id]
+                dx = float(default_state[0] - origin[0])
+                dy = float(default_state[1] - origin[1])
+                dyaw = _quat_wxyz_yaw(default_state[3:7])
+                robot_default_state = robot_asset.data.default_root_state[env_id]
+                rx = float(robot_default_state[0] - origin[0])
+                ry = float(robot_default_state[1] - origin[1])
+                fallback_robot_yaw = _quat_wxyz_yaw(robot_default_state[3:7])
+                table_obbs = [
+                    ("packing_table", make_obb(dx, dy, DESK_BBOX, dyaw)),
+                    ("robot", make_obb(rx, ry, ROBOT_BBOX, fallback_robot_yaw)),
+                ]
+                if include_ridgeback:
+                    table_obbs.extend(_make_ridgeback_group(rx, ry, fallback_robot_yaw))
+                table_obbs.extend(
+                    _make_static_cluster_group(
+                        rx, ry, fallback_robot_yaw, static_cluster_members
+                    )
+                )
+                desk_positions[env_idx] = torch.tensor([dx, dy, FLOOR_Z], device=device)
+                desk_yaws[env_idx] = dyaw
+                selected_obbs = table_obbs
+                selected_layout_name = "fixed_teleop_fallback"
+                success = True
                 print(
-                    f"[PLACEMENT_ERROR] env={env_id} table_group placement_failed despawning=true "
-                    f"last_issues={fallback_issues}",
+                    f"[PLACEMENT_ERROR] env={env_id} table_group placement_failed "
+                    f"falling_back_to_fixed_anchor=true last_issues={fallback_issues}",
                     flush=True,
                 )
 
