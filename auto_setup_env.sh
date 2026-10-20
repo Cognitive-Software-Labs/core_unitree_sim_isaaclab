@@ -1,4 +1,7 @@
 #!/bin/bash
+# Legacy 4.5/5.x installer; not compatible with this 6.1 port checkout.
+# Before 6.1 use, attempt and test a complete port; do not blindly change pins.
+# Review doc/isaacsim6.1_port_review.md. No validated 6.1 installer is provided.
 set -e 
 
 # 0. Directory safety check
