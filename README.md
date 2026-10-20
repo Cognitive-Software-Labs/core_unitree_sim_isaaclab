@@ -30,6 +30,28 @@ Replace `enp3s0` with the simulator network interface. Do not run live DDS
 teleoperation until you have verified that this interface and the DDS domain
 are isolated from hardware you do not intend to control.
 
+## Branch compatibility status
+
+This branch targets **Isaac Sim 6.1.0 / Isaac Lab 3.0.0 / Python 3.12**.
+[PR #2](https://github.com/Cognitive-Software-Labs/core_unitree_sim_isaaclab/pull/2)
+records successful hospital G1 Dex1 / Meta Quest 3 testing on September 18,
+2026 in an existing, locally modified environment. It was closed without
+merging for later review. That test does not validate a fresh installation.
+
+**Before using the setup paths below, their port to 6.1 must be attempted and
+tested. Do not run them unchanged or blindly replace version pins.** The root
+Dockerfile, automatic installer and older guides still target 5.x. The Quest
+launcher also uses legacy environment assumptions and launcher flags.
+
+See the [dependency and setup-path review](doc/isaacsim6.1_port_review.md) for
+recorded versions, compatibility gaps, and validation needed. Existing 5.1
+pins are retained for a separate 5.1-compatible checkout; they do not provide
+a working setup for this port branch. No tested replacement installer is
+provided by this documentation change.
+
+<details>
+<summary>Legacy 5.1 installation and launch instructions — port and test before 6.1 use</summary>
+
 ## What you need
 
 The supported pip installation path is for **Linux x86_64 with an NVIDIA GPU**.
@@ -285,6 +307,8 @@ the `teleimager` submodule is present and installed with
 Set `UNITREE_DDS_NETWORK_INTERFACE` before launching. The simulator prints the
 selected interface during startup.
 
+</details>
+
 ## Project layout
 
 ```text
@@ -300,6 +324,10 @@ sim_main.py       Simulator entry point
 ## Detailed guides
 
 ### Installation and first launch
+
+The older guides below require a tested port before use with this 6.1 branch.
+
+- [6.1 compatibility and installation-path review](doc/isaacsim6.1_port_review.md)
 
 - [Isaac Sim 5.1 installation notes](doc/isaacsim5.1_install.md)
 - [Isaac Sim 5.0 installation notes](doc/isaacsim5.0_install.md)

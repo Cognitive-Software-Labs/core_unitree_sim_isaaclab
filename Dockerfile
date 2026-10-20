@@ -1,3 +1,7 @@
+# LEGACY ISAAC SIM 5.1 RECIPE — not a container for the 6.1 port.
+# Clones upstream Unitree code, not this checkout. See doc/isaacsim6.1_port_review.md.
+# Before 6.1 use, port this complete recipe and test build, GPU cameras and DDS.
+# Do not blindly change the Sim pin. Existing dependency pins are retained.
 # ==============================
 # Stage 1: Builder
 # ==============================
