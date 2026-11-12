@@ -1,3 +1,6 @@
+> Legacy 5.1 instructions: use a separate 5.1-compatible checkout and Python 3.11 environment.
+> This port branch requires [Isaac Sim 6.1 / Isaac Lab 3.0](isaacsim6.1_port_review.md).
+
 ## Isaac Sim 5.1.0 Environment Installation
 
 ### 2.1 Clone the unitree_sim_isaaclab Repository

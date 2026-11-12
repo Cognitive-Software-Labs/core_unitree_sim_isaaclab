@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# Legacy launcher: before 6.1 use, port and test its environment activation
+# and AppLauncher flags. See doc/isaacsim6.1_port_review.md; do not run unchanged.
 set -Eeuo pipefail
 
 # All paths below are derived from this script's location or from
