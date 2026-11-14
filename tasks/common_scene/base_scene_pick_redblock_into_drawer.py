@@ -32,7 +32,7 @@ class TablePickRedblockIntoDrawerSceneCfg(InteractiveSceneCfg): # inherit from t
         prim_path="/World/envs/env_.*/Room",
         init_state=AssetBaseCfg.InitialStateCfg(
             pos=[0.0, 0.0, 0],  # room center point
-            rot=[1.0, 0.0, 0.0, 0.0]
+            rot=[0.0, 0.0, 0.0, 1.0]
         ),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/objects/small_warehouse/small_warehouse_digital_twin.usd",  # use simple room model
@@ -55,7 +55,7 @@ class TablePickRedblockIntoDrawerSceneCfg(InteractiveSceneCfg): # inherit from t
         prim_path="/World/envs/env_.*/Red_block",
         init_state=RigidObjectCfg.InitialStateCfg(
             pos=[-2.5, -4.15, 0.84],
-            rot=[1, 0, 0, 0]
+            rot=[0, 0, 0, 1]
         ),
         spawn=sim_utils.CuboidCfg(
             size=(0.05, 0.05, 0.05),

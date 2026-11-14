@@ -194,6 +194,89 @@ Isaac Lab's `AppLauncher` loads a Kit "experience" file that determines the wind
 ```
 This resolves relative to Isaac Sim's own `apps/` folder inside the venv (`.../site-packages/isaacsim/apps/isaacsim.exp.full.kit`, which declares `title = "Isaac Sim Full"`). Verified this doesn't break anything — task/DDS/camera functionality all still worked identically, just with the native branding and a heavier extension set (slower boot, ~2-3x more CPU during startup than the lean Isaac Lab experience). One new harmless warning appears with this experience: `ROS2 Bridge startup failed ... libament_index_cpp.so: cannot open shared object file` — we don't use ROS2 for this project, so this can be ignored. Other `.kit` files are available in the same `apps/` folder if a different look/extension set is ever wanted (e.g. `isaacsim.exp.base.kit` for a lighter non-Lab option, `isaacsim.exp.full.streaming.kit` for livestream-oriented builds).
 
+## Follow-up audit 2026-11-11 (whole-body tasks)
+
+Found while bringing up `Isaac-Move-Cylinder-G129-Dex3-Wholebody` (never run after the port):
+
+1. **25 quaternions in list form were never reordered.** The earlier one-off script only matched
+   tuples `(...)`; every `rot=[1.0, 0.0, 0.0, 0.0]`-style list was left in `(w,x,y,z)`, which
+   Isaac Lab 3.0 reads as a 180-degree flip about X. Affected (now fixed):
+   `tasks/common_scene/base_scene_pickplace_cylindercfg.py` (8), `..._cylindercfg_wholebody.py` (5,
+   incl. world camera), `..._pickplace_redblock.py` (4, incl. camera), `..._stack_rgyblock.py` (6,
+   incl. camera), `..._pick_redblock_into_drawer.py` (2). Symptoms: warehouse upside down,
+   table 2 under the floor, table 1 on its side, objects falling to the floor, free-base robot
+   falling through the (flipped, downward-facing) floor mesh.
+   Audit: every rotation literal paired with the 5.1 checkout -> 76/76 now correctly converted;
+   a keyword-free scan of all 87 unit 4-tuples leaves only intentional internal `(w,x,y,z)`
+   constants (`base_orientation_wxyz`, `container_goal.CRATE_LOCAL_ORIENTATIONS`, tests).
+2. **Whole-body teleop sent no commands.** `action_provider_wh_dds.py` passed a 1-D target to
+   `set_joint_position_target`; Isaac Lab 3.0 requires `(num_envs, num_joints)`, the call raised
+   and the surrounding `try/except` swallowed it every step. Fixed with `.unsqueeze(0)`.
+3. `pickplace_cylinder_g1_29dof_dex1_joint_env_cfg.py`: Ridgeback base yaw unpacked
+   `w, x, y, z = body_quat_w` -> fixed to `x, y, z, w` (basket containment check).
+4. `isaac-projects/room_randomizer_lab/placement_utils.py`: wrote `(w,x,y,z)` into the root state
+   -> reordered like the `tasks/` copy.
+5. `tools/validate_dex1_grasp_contacts.py`: raw `ProxyArray.dtype` (a warp dtype) passed to torch,
+   and a `(1,0,0,0)` identity -> `.torch.dtype`, `(0,0,0,1)`. `run_pickplace_visual_debug.py`:
+   explicit `.torch` for joint targets.
+6. `tests/test_hospital_tabletop_assets.py`: the crate test faked `root_quat_w` in `(w,x,y,z)`
+   (the module converts from Isaac Lab's `(x,y,z,w)`), so it failed 5/6; fake data now `(x,y,z,w)`.
+   `pytest tests/` -> 49 passed (CPU only, no Isaac Sim needed).
+
+Not a bug: the warehouse USD has its own floor collider (`/Lab/Structure/floor`, triangle mesh,
+z=0); no extra ground plane is needed once the room is no longer flipped.
+Still to verify on GPU: load every task and check robot/objects stay put (see the GPU checks below).
+
+### GPU check 2026-11-14 (3 representative tasks)
+Local verification script (not in this repo): load the task, zero action for 4 s, one process
+per task, check robot/rigid-object height and tilt, save camera images. RTX PRO 6000, headless:
+- `Isaac-Move-Cylinder-G129-Dex3-Wholebody`: warehouse, both tables and the cylinder are in place
+  (the cylinder rests on the table, upright). The robot does not fall through the floor; with zero
+  action and no locomotion policy it tips over (expected). The cylinder spawns with its centre at
+  z=0.84 although it is 0.35 m tall, so it pops up to 0.969 within 0.1 s and then stays still
+  (pre-existing spawn height, same in 5.1, harmless).
+- `Isaac-PickPlace-RedBlock-G129-Dex1-Joint` (hospital room): fixed base stays at 0.76; the cubes
+  settle on the table; furniture static. Props the room randomizer could not place are parked at
+  z=-100 (by design, logged as PLACEMENT_ERROR).
+- `Isaac-Stack-RgyBlock-G129-Dex3-Joint`: blocks settle on the table. In one of two runs the red
+  block ended tipped 90 deg because the +-5 cm random resets of the three 5 cm blocks can overlap
+  (pre-existing task design).
+- `world_camera` (`/World/PerspectiveCamera`, outside the env namespace) renders a uniform colour
+  in all three tasks; its pose/orientation is correct. The teleop sim excludes it by default
+  (`--camera_exclude world_camera`), so teleop is unaffected. Not fixed here.
+- Same check, also OK: `Isaac-PickPlace-Cylinder-G129-Dex1-Joint`,
+  `Isaac-PickPlace-Hospital-G129-Dex1-Wholebody`, `Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint`.
+- Not yet run on GPU: the other 13 registered tasks, and the DDS teleop path through
+  `action_provider_wh_dds.py` (fix 2 above is verified by code review and the API, not by a DDS run).
+
+### Ridgeback scenes, GPU check 2026-11-14 (findings only, no code changed for these)
+Checked with local scripts (not in this repo) that trigger the reset categories through
+`env_cfg.event_manager.trigger(...)` like `sim_main.py`, record a video and read poses from the
+Isaac Lab buffers and the PhysX view.
+- `Isaac-PickPlace-MedicineBottle-Hospital-G129-Dex1-Joint` (the scene the Quest start script
+  uses, static crate Ridgeback): G1 at the authored ROBOT_POS in front of the table; Quest A
+  (category 4) moves the Ridgeback along the arc exactly as documented: constant radius 0.78 m,
+  5.0 deg per press, G1 directly behind the base frame (body is authored turned 180 deg) at every
+  point. Quest Y keeps the table fixed and scrambles the room. Matches the design.
+- Quest B (category 2, full randomization) moves G1 and the Ridgeback, but NOT the packing table:
+  `packing_table` is a RigidObject whose only rigid body in `PackingTable.usd` is the crate
+  `container_h20`; the table itself (`SM_HeavyDutyPackingTable_C02_01`) is a static collider, so
+  only the crate moves and tabletop objects are placed relative to a table that is not there.
+  Not a port regression: Isaac Lab 2.x (0.54.3, used by the 5.1 env) resolves the same single
+  RigidBodyAPI prim and `modify_rigid_body_properties` never adds one to the root, and both
+  checkouts use the same PackingTable.usd. (Not run on 5.1, which cannot start on this machine.)
+  PR #2's 2026-09-18 check of category 2 covered robot/Ridgeback root poses, not the table.
+- `Isaac-PickPlace-Cylinder-G129-Dex1-Joint` / `...-Hospital-G129-Dex1-Wholebody` (older moving
+  Ridgeback assistant; the 2026-08-21 validation report in infodocs/hospital_teleoperation_integration.md
+  says it was not runtime-verified then): in
+  fixed-table mode (default at startup) G1 spawns at the generic preset pose (-0.15, 0), ~10 m from
+  the table at (-7.5, -7.5) and outside the room, because commit 1a0ea2e made fixed-table resets use
+  the task's authored robot pose and these tasks never author one. In the fixed-base Joint task with
+  G1 moved next to the table (local experiment, reverted), the assistant drives but stops ~0.4 m
+  short of the staging point and never reaches it; cause not found (lifting the chassis off the
+  floor did not help). The Wholebody variant was not tested this way. Pre-existing, not a port
+  regression; left for the task authors.
+
 ## NOT yet verified / open items
 
 1. **DDS fix not yet validated with a real Quest headset.** Everything up to the XR bridge's "press r" prompt is confirmed; actually moving the robot via headset tracking has not been tested. (This was in progress when the quaternion bug was discovered and took priority — the XR bridge should be relaunched to reconnect after any further sim restarts, since it needs a fresh connection to the sim's image server each time the sim process restarts.)

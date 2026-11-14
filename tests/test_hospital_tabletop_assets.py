@@ -396,7 +396,8 @@ class HospitalTabletopAssetTests(unittest.TestCase):
         def rigid_data(center, center_offset, root_quat=identity):
             offset = torch.tensor(center_offset).repeat(num_envs, 1)
             root_pos = center - goal.quaternion_apply(root_quat, offset)
-            return types.SimpleNamespace(root_pos_w=root_pos, root_quat_w=root_quat)
+            # Isaac Lab 3.0 data is (x, y, z, w); the goal module's helpers are (w, x, y, z).
+            return types.SimpleNamespace(root_pos_w=root_pos, root_quat_w=root_quat[..., [1, 2, 3, 0]])
 
         scene = {
             "pill_bottle_t": types.SimpleNamespace(
@@ -411,7 +412,7 @@ class HospitalTabletopAssetTests(unittest.TestCase):
             ),
             "ridgeback": types.SimpleNamespace(
                 data=types.SimpleNamespace(
-                    root_pos_w=ridgeback_pos, root_quat_w=ridgeback_quat
+                    root_pos_w=ridgeback_pos, root_quat_w=ridgeback_quat[..., [1, 2, 3, 0]]
                 )
             ),
         }

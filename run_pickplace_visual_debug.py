@@ -48,8 +48,8 @@ def main():
                 env._sim_step_counter += 1
                 env.action_manager.apply_action()
                 robot = env.scene["robot"]
-                robot.set_joint_position_target(robot.data.default_joint_pos)
-                robot.set_joint_velocity_target(robot.data.default_joint_vel)
+                robot.set_joint_position_target(robot.data.default_joint_pos.torch)
+                robot.set_joint_velocity_target(robot.data.default_joint_vel.torch)
                 env.scene.write_data_to_sim()
                 env.sim.step(render=False)
                 if env._sim_step_counter % env.cfg.sim.render_interval == 0 and is_rendering:

@@ -217,7 +217,7 @@ def update_ridgeback_assistant(env):
         delta_y = object_pos[1] - base_pos[1]
         # Convert the object position into Ridgeback's local frame.  The basket
         # is 0.47 x 0.31 m internally and follows base_link yaw.
-        w, x, y, z = base_quat
+        x, y, z, w = base_quat  # Isaac Lab 3.0 quaternion order is (x, y, z, w)
         base_yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
         cos_yaw = torch.cos(base_yaw)
         sin_yaw = torch.sin(base_yaw)

@@ -28,7 +28,7 @@ def hospital_medicine_bottle_cfg(
             # Leftmost item in the front 1x4 task row.  The complete row stays
             # away from the table's built-in container on the right.
             pos=init_pos,
-            rot=[1, 0, 0, 0],
+            rot=[0, 0, 0, 1],
         ),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/objects/hospital_medicine_bottle.usda",
@@ -82,7 +82,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
             # y=[-14, -4]. Translate its open interior around the existing
             # calibrated robot/table workspace at the origin.
             pos=[7.5, 7.5, 0.0],
-            rot=[1.0, 0.0, 0.0, 0.0]
+            rot=[0.0, 0.0, 0.0, 1.0]
         ),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/environments/hospital_room/new_base_room.usda",
@@ -94,7 +94,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
     packing_table = AssetBaseCfg(
         prim_path="/World/envs/env_.*/PackingTable",    # table in the scene
         init_state=AssetBaseCfg.InitialStateCfg(pos=[0.0, 0.55, -0.2],   # initial position [x, y, z]
-                                                rot=[1.0, 0.0, 0.0, 0.0]), # initial rotation [x, y, z, w]
+                                                rot=[0.0, 0.0, 0.0, 1.0]), # initial rotation [x, y, z, w]
         spawn=UsdFileCfg(
             # usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/PackingTable/packing_table.usd",    # table model file
             usd_path=f"{project_root}/assets/objects/PackingTable/PackingTable.usd",    # table model file
@@ -105,7 +105,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
     packing_table_2 = AssetBaseCfg(
         prim_path="/World/envs/env_.*/PackingTable_2",   
         init_state=AssetBaseCfg.InitialStateCfg(pos=[-3.5, 0.55, -0.2],  
-                                                rot=[1.0, 0.0, 0.0, 0.0]), 
+                                                rot=[0.0, 0.0, 0.0, 1.0]),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/objects/PackingTable/PackingTable.usd",    # table model file
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),   
@@ -114,7 +114,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
     packing_table_3 = AssetBaseCfg(
         prim_path="/World/envs/env_.*/PackingTable_3",   
         init_state=AssetBaseCfg.InitialStateCfg(pos=[3.5, 0.55, -0.2],  
-                                                rot=[1.0, 0.0, 0.0, 0.0]), 
+                                                rot=[0.0, 0.0, 0.0, 1.0]),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/objects/PackingTable/PackingTable.usd",    # table model file
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),   
@@ -123,7 +123,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
     packing_table_4 = AssetBaseCfg(
         prim_path="/World/envs/env_.*/PackingTable_4",   
         init_state=AssetBaseCfg.InitialStateCfg(pos=[3.5, -5, -0.2],  
-                                                rot=[1.0, 0.0, 0.0, 0.0]), 
+                                                rot=[0.0, 0.0, 0.0, 1.0]),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/objects/PackingTable/PackingTable.usd",    # table model file
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),   
@@ -132,7 +132,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
     packing_table_5 = AssetBaseCfg(
         prim_path="/World/envs/env_.*/PackingTable_5",   
         init_state=AssetBaseCfg.InitialStateCfg(pos=[-3.5, -5, -0.2],  
-                                                rot=[1.0, 0.0, 0.0, 0.0]), 
+                                                rot=[0.0, 0.0, 0.0, 1.0]),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/objects/PackingTable/PackingTable.usd",    # table model file
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),   
@@ -141,7 +141,7 @@ class TableCylinderSceneCfg(InteractiveSceneCfg): # inherit from the interactive
     packing_table_6 = AssetBaseCfg(
         prim_path="/World/envs/env_.*/PackingTable_6",   
         init_state=AssetBaseCfg.InitialStateCfg(pos=[0.0, -5, -0.2],  
-                                                rot=[1.0, 0.0, 0.0, 0.0]), 
+                                                rot=[0.0, 0.0, 0.0, 1.0]),
         spawn=UsdFileCfg(
             usd_path=f"{project_root}/assets/objects/PackingTable/PackingTable.usd",    # table model file
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),   

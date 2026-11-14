@@ -187,7 +187,7 @@ def _distal_centers(robot, side: str) -> tuple[torch.Tensor, torch.Tensor]:
         local_center = torch.tensor(
             DISTAL_COLLIDER_LOCAL_CENTERS[link_name],
             device=robot.device,
-            dtype=robot.data.body_pos_w.dtype,
+            dtype=robot.data.body_pos_w.torch.dtype,
         ).unsqueeze(0)
         centers.append(
             robot.data.body_pos_w[:, body_id]
@@ -210,7 +210,7 @@ def _place_bottle_between_jaws(env, bottle_name: str, side: str) -> None:
     # above the table while centering it laterally between the jaw pads.
     root_state[:, 2] = 0.797 + env.scene.env_origins[:, 2]
     root_state[:, 3:7] = torch.tensor(
-        (1.0, 0.0, 0.0, 0.0), device=env.device, dtype=root_state.dtype
+        (0.0, 0.0, 0.0, 1.0), device=env.device, dtype=root_state.dtype  # identity, (x, y, z, w)
     )
     root_state[:, 7:] = 0.0
     bottle.write_root_state_to_sim(root_state)
@@ -359,7 +359,7 @@ def main() -> None:
                             - torch.tensor(
                                 jaw_midpoint[0:2],
                                 device=env.device,
-                                dtype=env.scene[bottle_name].data.root_pos_w.dtype,
+                                dtype=env.scene[bottle_name].data.root_pos_w.torch.dtype,
                             )
                         ).item()
                     )

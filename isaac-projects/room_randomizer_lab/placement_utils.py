@@ -244,7 +244,8 @@ def build_root_state(
     state[:, 2] = pos[:, 2] + env_origins[env_ids, 2]
 
     quat = yaw_to_quat(yaw_rad)
-    state[:, 3:7] = quat
+    # yaw_to_quat is (w, x, y, z); Isaac Lab 3.0 root states are (x, y, z, w)
+    state[:, 3:7] = quat[:, [1, 2, 3, 0]]
     state[:, 7:] = 0.0
 
     return state
